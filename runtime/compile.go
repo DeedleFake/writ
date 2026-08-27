@@ -121,21 +121,22 @@ func (s *compileState) addOn(ev Value, paramsForm Value, body []Value) error {
 	if paramsForm.k != KindList || paramsForm.vec {
 		return errMsg("(on event (args...) body) needs a parameter list")
 	}
-	if _, has := s.onMap[ev.s]; has && !(s.last.ok && s.last.t == "on" && s.last.name == ev.s) {
-		return errf("(on %s ...) must sit next to the last (on %s ...)", ev.s, ev.s)
+	name := ev.Name()
+	if _, has := s.onMap[name]; has && !(s.last.ok && s.last.t == "on" && s.last.name == name) {
+		return errf("(on %s ...) must sit next to the last (on %s ...)", name, name)
 	}
 	params, err := parseParams(paramsForm, "on")
 	if err != nil {
 		return err
 	}
-	list := s.onMap[ev.s]
+	list := s.onMap[name]
 	if unreachableBy(list, params) {
-		return errf("unreachable clause for %s", ev.s)
+		return errf("unreachable clause for %s", name)
 	}
 	pf := paramsForm
 	list = append(list, Clause{Params: params, Body: body, ParamsForm: &pf})
-	s.onMap[ev.s] = list
-	s.last = lastAdj{t: "on", name: ev.s, ok: true}
+	s.onMap[name] = list
+	s.last = lastAdj{t: "on", name: name, ok: true}
 	return nil
 }
 
@@ -303,13 +304,13 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 			if err != nil {
 				return false, err
 			}
-			list := s.onMap[ev.s]
+			list := s.onMap[ev.Name()]
 			if unreachableBy(list, params) {
-				return false, errf("unreachable clause for %s", ev.s)
+				return false, errf("unreachable clause for %s", ev.Name())
 			}
 			pf := paramsForm
 			list = append(list, Clause{Params: params, Body: form.xs[3:], ParamsForm: &pf})
-			s.onMap[ev.s] = list
+			s.onMap[ev.Name()] = list
 			return true, nil
 		}
 		return false, nil
@@ -401,11 +402,11 @@ func parseDefHead(form Value, kw string) (DefHead, error) {
 		return DefHead{}, errMsg(hint + " needs a name")
 	}
 	nameForm := head.xs[0]
-	if nameForm.k != KindSymbol || nameForm.s == "" || strings.HasSuffix(nameForm.s, ":") {
+	if nameForm.k != KindSymbol || nameForm.Name() == "" || strings.HasSuffix(nameForm.Name(), ":") {
 		return DefHead{}, errMsg(hint + " needs a name")
 	}
-	if nameForm.s == "true" || nameForm.s == "false" || nameForm.s == "nil" {
-		return DefHead{}, errf("cannot redefine %s", nameForm.s)
+	if nameForm.IsTrue() || nameForm.IsFalse() || nameForm.IsNil() {
+		return DefHead{}, errf("cannot redefine %s", nameForm.Name())
 	}
 	paramsForm := CallList(head.xs[1:]...)
 	paramsForm.xs = head.xs[1:]
@@ -417,7 +418,7 @@ func parseDefHead(form Value, kw string) (DefHead, error) {
 		return DefHead{}, err
 	}
 	return DefHead{
-		Name:       nameForm.s,
+		Name:       nameForm.Name(),
 		NameForm:   nameForm,
 		Params:     params,
 		ParamsForm: paramsForm,
@@ -433,15 +434,15 @@ func isLit(v Value) bool {
 func asPattern(v Value) (Pattern, error) {
 	if v.k == KindSymbol {
 		if reservedLit(v) {
-			return Pattern{Value: Symbol(v.s)}, nil
+			return Pattern{Value: Symbol(v.Name())}, nil
 		}
-		if strings.HasSuffix(v.s, ":") && len(v.s) > 1 {
+		if strings.HasSuffix(v.Name(), ":") && len(v.Name()) > 1 {
 			return Pattern{}, errMsg("parameter must be a name or a literal")
 		}
-		if v.s == "" {
+		if v.Name() == "" {
 			return Pattern{}, errMsg("empty parameter name")
 		}
-		return Pattern{Bind: true, Name: v.s}, nil
+		return Pattern{Bind: true, Name: v.Name()}, nil
 	}
 	if isLit(v) {
 		return Pattern{Value: v}, nil
@@ -478,7 +479,7 @@ func parseParams(form Value, ctx string) (Params, error) {
 				return Params{}, errMsg("only one @rest parameter is allowed")
 			}
 			inner := p.innerVal()
-			if inner.k != KindSymbol || inner.s == "" || strings.HasSuffix(inner.s, ":") {
+			if inner.k != KindSymbol || inner.Name() == "" || strings.HasSuffix(inner.Name(), ":") {
 				return Params{}, errMsg("@rest needs a name")
 			}
 			for _, x := range form.xs[i+1:] {
@@ -487,7 +488,7 @@ func parseParams(form Value, ctx string) (Params, error) {
 				}
 			}
 			mode = "pos"
-			rest = inner.s
+			rest = inner.Name()
 			if containsStr(seen, rest) {
 				return Params{}, errf("duplicate parameter %s", rest)
 			}
@@ -559,11 +560,11 @@ func parseCallRaw(raw []Value) (callRaw, error) {
 			keyed = true
 			name := a.keyName()
 			if i+1 >= len(raw) {
-				return callRaw{}, errf("missing value for %s", a.s)
+				return callRaw{}, errf("missing value for %s", a.Name())
 			}
 			for _, k := range out.keys {
 				if k.name == name {
-					return callRaw{}, errf("duplicate %s", a.s)
+					return callRaw{}, errf("duplicate %s", a.Name())
 				}
 			}
 			out.keys = append(out.keys, struct {
@@ -697,8 +698,8 @@ func walkSlots(v Value, onSlot func(name string, node Value) error) error {
 	case KindComment:
 		return nil
 	case KindSymbol:
-		if strings.HasPrefix(v.s, "#") {
-			return onSlot(v.s, v)
+		if strings.HasPrefix(v.Name(), "#") {
+			return onSlot(v.Name(), v)
 		}
 		return nil
 	case KindQuote, KindUnquote, KindSplice:

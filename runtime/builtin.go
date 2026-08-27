@@ -616,7 +616,7 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		}
 		a := args[0]
 		if a.k == KindSymbol {
-			return Symbol(a.s), nil
+			return Symbol(a.Name()), nil
 		}
 		if a.k == KindString {
 			return Symbol(a.s), nil

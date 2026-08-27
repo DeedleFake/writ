@@ -5,6 +5,7 @@ import (
 	"math/big"
 	"strconv"
 	"strings"
+	"unique"
 
 	"deedles.dev/writ/scanner"
 )
@@ -75,6 +76,7 @@ type Value struct {
 	big      *big.Int
 	f        float64
 	s        string
+	sym      unique.Handle[string]
 	xs       []Value
 	vec      bool
 	mp       *mapData
@@ -111,7 +113,17 @@ var (
 )
 
 func internSym(name string) Value {
-	return Value{k: KindSymbol, s: name}
+	return Value{k: KindSymbol, sym: unique.Make(name)}
+}
+
+func (v Value) withSymName(name string) Value {
+	n := internSym(name)
+	n.span = v.span
+	n.hasSpan = v.hasSpan
+	n.cmt = v.cmt
+	n.blank = v.blank
+	n.broke = v.broke
+	return n
 }
 
 // Int64 returns an integer value.
@@ -320,12 +332,12 @@ func (v Value) Span() (Span, bool) {
 // HasSpan reports whether v has a source span.
 func (v Value) HasSpan() bool { return v.hasSpan }
 
-func (v Value) IsNil() bool { return v.k == KindSymbol && v.s == "nil" }
+func (v Value) IsNil() bool { return v.k == KindSymbol && v.sym == Nil.sym }
 
-func (v Value) IsTrue() bool { return v.k == KindSymbol && v.s == "true" }
+func (v Value) IsTrue() bool { return v.k == KindSymbol && v.sym == True.sym }
 
 // IsFalse reports whether v is false.
-func (v Value) IsFalse() bool { return v.k == KindSymbol && v.s == "false" }
+func (v Value) IsFalse() bool { return v.k == KindSymbol && v.sym == False.sym }
 
 func (v Value) IsBool() bool { return v.IsTrue() || v.IsFalse() }
 
@@ -391,12 +403,12 @@ func (v Value) Text() string {
 	return v.s
 }
 
-// Name returns the symbol name, or "" if v is not a symbol.
+// Name returns the interned symbol name, or "" if v is not a symbol.
 func (v Value) Name() string {
 	if v.k != KindSymbol {
 		return ""
 	}
-	return v.s
+	return v.sym.Value()
 }
 
 // Items returns list elements. The slice must not be mutated.
@@ -434,14 +446,19 @@ func (v Value) commentText() string {
 }
 
 func (v Value) isKeySym() bool {
-	return v.k == KindSymbol && len(v.s) > 1 && strings.HasSuffix(v.s, ":")
+	if v.k != KindSymbol {
+		return false
+	}
+	s := v.Name()
+	return len(s) > 1 && strings.HasSuffix(s, ":")
 }
 
 func (v Value) keyName() string {
 	if !v.isKeySym() {
 		return ""
 	}
-	return v.s[:len(v.s)-1]
+	s := v.Name()
+	return s[:len(s)-1]
 }
 
 func reservedLit(v Value) bool {
@@ -449,7 +466,7 @@ func reservedLit(v Value) bool {
 }
 
 func isSymName(v Value, name string) bool {
-	return v.k == KindSymbol && v.s == name
+	return v.k == KindSymbol && v.sym == unique.Make(name)
 }
 
 func filterComments(xs []Value) []Value {
@@ -541,7 +558,7 @@ func printVal(v Value) string {
 	case KindString:
 		return v.s
 	case KindSymbol:
-		return v.s
+		return v.Name()
 	case KindFn:
 		return "#<fn>"
 	case KindList:
@@ -601,8 +618,10 @@ func (v Value) Equal(o Value) bool {
 		return v.asBig().Cmp(o.asBig()) == 0
 	case KindFloat:
 		return v.f == o.f
-	case KindString, KindSymbol, KindComment:
+	case KindString, KindComment:
 		return v.s == o.s
+	case KindSymbol:
+		return v.sym == o.sym
 	case KindFn:
 		return false
 	case KindQuote, KindUnquote, KindSplice:

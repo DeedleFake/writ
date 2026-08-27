@@ -41,7 +41,9 @@ func valuePtrEq(a, b Value) bool {
 		return a.mp != nil && a.mp == b.mp
 	case KindQuote, KindUnquote, KindSplice:
 		return a.inner != nil && a.inner == b.inner
-	case KindSymbol, KindString, KindComment:
+	case KindSymbol:
+		return a.sym == b.sym && a.hasSpan == b.hasSpan && a.span == b.span
+	case KindString, KindComment:
 		return a.s == b.s && a.hasSpan == b.hasSpan && a.span == b.span
 	case KindInt:
 		return a.Equal(b) && a.hasSpan == b.hasSpan && a.span == b.span
@@ -96,9 +98,8 @@ func hygienic(v Value, imported []Value, subst map[string]string, h *hygState) V
 	}
 	switch v.k {
 	case KindSymbol:
-		if n, ok := subst[v.s]; ok {
-			v.s = n
-			return v
+		if n, ok := subst[v.Name()]; ok {
+			return v.withSymName(n)
 		}
 		return v
 	case KindQuote, KindUnquote, KindSplice:
@@ -117,7 +118,7 @@ func hygienic(v Value, imported []Value, subst map[string]string, h *hygState) V
 	case KindList:
 		name := ""
 		if len(v.xs) > 0 && v.xs[0].k == KindSymbol {
-			name = v.xs[0].s
+			name = v.xs[0].Name()
 		}
 		if (name == "let" || name == "let!") && len(v.xs) >= 1 {
 			exported := name == "let!"
@@ -146,7 +147,7 @@ func hygienic(v Value, imported []Value, subst map[string]string, h *hygState) V
 			body := make([]Value, 0, len(v.xs))
 			head := v.xs[0]
 			if head.k == KindSymbol {
-				head.s = "let"
+				head = head.withSymName("let")
 			} else {
 				head = Symbol("let")
 			}
@@ -192,11 +193,10 @@ func renameParamForm(form Value, imported []Value, subst map[string]string, h *h
 	out := make([]Value, 0, len(form.xs))
 	for _, p := range form.xs {
 		if p.k == KindSplice && p.innerVal().k == KindSymbol {
-			nk := h.fresh(p.innerVal().s)
-			next[p.innerVal().s] = nk
-			inner := p.innerVal()
-			inner.s = nk
-			out = append(out, p.setInner(inner))
+			old := p.innerVal().Name()
+			nk := h.fresh(old)
+			next[old] = nk
+			out = append(out, p.setInner(p.innerVal().withSymName(nk)))
 			continue
 		}
 		if p.k == KindSymbol && !p.isKeySym() {
@@ -204,20 +204,16 @@ func renameParamForm(form Value, imported []Value, subst map[string]string, h *h
 				out = append(out, p)
 				continue
 			}
-			nk := h.fresh(p.s)
-			next[p.s] = nk
-			cp := p
-			cp.s = nk
-			out = append(out, cp)
+			nk := h.fresh(p.Name())
+			next[p.Name()] = nk
+			out = append(out, p.withSymName(nk))
 			continue
 		}
 		if p.isKeySym() {
 			raw := p.keyName()
 			nk := h.fresh(raw)
 			next[raw] = nk
-			cp := p
-			cp.s = nk + ":"
-			out = append(out, cp)
+			out = append(out, p.withSymName(nk+":"))
 			continue
 		}
 		out = append(out, hygienic(p, imported, subst, h))
@@ -413,8 +409,8 @@ func expandVal(v Value, env *env, c *ctx) (Value, error) {
 		}
 		head := xs[0]
 		if head.k == KindSymbol {
-			if clauses, ok := c.macros[head.s]; ok {
-				expanded, err := applyMacro(head.s, clauses, xs[1:], c, v)
+			if clauses, ok := c.macros[head.Name()]; ok {
+				expanded, err := applyMacro(head.Name(), clauses, xs[1:], c, v)
 				if err != nil {
 					return Value{}, err
 				}

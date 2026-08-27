@@ -91,10 +91,10 @@ func evalCallRaw(raw []Value, env *env, c *ctx) (callParts, error) {
 			keyed = true
 			name := a.keyName()
 			if i+1 >= len(raw) {
-				return callParts{}, errf("missing value for %s", a.s)
+				return callParts{}, errf("missing value for %s", a.Name())
 			}
 			if _, ok := out.keys[name]; ok {
-				return callParts{}, errf("duplicate %s", a.s)
+				return callParts{}, errf("duplicate %s", a.Name())
 			}
 			val, err := evalVal(raw[i+1], env, c)
 			if err != nil {
@@ -135,9 +135,9 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 		return Value{}, errVal(v, "@ needs a list to insert into")
 	case KindSymbol:
 		if reservedLit(v) {
-			return Symbol(v.s), nil
+			return Symbol(v.Name()), nil
 		}
-		return lookup(env, v.s)
+		return lookup(env, v.Name())
 	case KindMap:
 		m := newMap()
 		if v.mp != nil {
@@ -167,31 +167,31 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 		}
 		head := xs[0]
 		if head.k != KindSplice && head.k == KindSymbol {
-			if sf, handled, err := special(head.s, xs[1:], env, c); handled {
+			if sf, handled, err := special(head.Name(), xs[1:], env, c); handled {
 				return sf, err
 			}
-			if _, ok := c.macros[head.s]; ok {
+			if _, ok := c.macros[head.Name()]; ok {
 				ex, err := expandVal(v, env, c)
 				if err != nil {
 					return Value{}, err
 				}
 				return evalVal(ex, env, c)
 			}
-			if scanner.IsCoreBuiltin(head.s) {
+			if scanner.IsCoreBuiltin(head.Name()) {
 				call, err := evalCallRaw(xs[1:], env, c)
 				if err != nil {
 					return Value{}, err
 				}
-				return callBuiltin(head.s, call, c)
+				return callBuiltin(head.Name(), call, c)
 			}
 			if c.rt != nil {
-				if b, ok := c.rt.extra[head.s]; ok {
+				if b, ok := c.rt.extra[head.Name()]; ok {
 					call, err := evalCallRaw(xs[1:], env, c)
 					if err != nil {
 						return Value{}, err
 					}
 					if len(call.keys) > 0 {
-						return Value{}, errf("%s does not take keyword arguments", head.s)
+						return Value{}, errf("%s does not take keyword arguments", head.Name())
 					}
 					return c.rt.hostCall(func() (Value, error) { return b(call.pos) })
 				}
@@ -341,7 +341,7 @@ func evalQuote(v Value, env *env, c *ctx, depth int) (Value, error) {
 		}
 		return Value{k: KindMap, mp: m}, nil
 	case KindSymbol:
-		return Symbol(v.s), nil
+		return Symbol(v.Name()), nil
 	default:
 		return v, nil
 	}
@@ -642,7 +642,7 @@ func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
 		return Value{}, errMsg("no matching clause")
 	}
 	if fn.k == KindSymbol {
-		return callBuiltin(fn.s, call, c)
+		return callBuiltin(fn.Name(), call, c)
 	}
 	return Value{}, errMsg("not a function")
 }

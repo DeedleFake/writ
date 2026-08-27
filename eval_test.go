@@ -204,6 +204,17 @@ func TestEvalPipe(t *testing.T) {
 	}
 }
 
+func TestEvalInternedSymbols(t *testing.T) {
+	v := evals(t, "(= 'hits 'hits)")
+	if !v.IsTrue() {
+		t.Fatalf("quoted symbols: %v", v)
+	}
+	v = evals(t, `(= (symbol "hits") 'hits)`)
+	if !v.IsTrue() {
+		t.Fatalf("symbol constructor: %v", v)
+	}
+}
+
 func TestEvalQuoteEval(t *testing.T) {
 	v := evals(t, "(eval '(+ 1 2))")
 	if !v.Equal(runtime.Int64(3)) {

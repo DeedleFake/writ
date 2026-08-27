@@ -171,3 +171,23 @@ func TestParseTrueFalseNil(t *testing.T) {
 		}
 	}
 }
+
+func TestParseInternsSymbols(t *testing.T) {
+	forms, err := Parse("'hits 'hits")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(forms) != 2 {
+		t.Fatalf("forms %d", len(forms))
+	}
+	a := forms[0].Inner()
+	b := forms[1].Inner()
+	if a.Kind() != runtime.KindSymbol || !a.Equal(b) || a.Name() != "hits" {
+		t.Fatalf("a=%v b=%v", a, b)
+	}
+	sa, okA := a.Span()
+	sb, okB := b.Span()
+	if !okA || !okB || sa == sb {
+		t.Fatalf("want distinct spans, got %+v %+v", sa, sb)
+	}
+}
