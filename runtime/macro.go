@@ -313,14 +313,14 @@ func hygienicFnLike(v Value, imported []Value, subst map[string]string, name str
 	return v
 }
 
-func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) (Value, error) {
+func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) ([]Value, error) {
 	parsed, err := parseCallRaw(raw)
 	if err != nil {
 		e := asError(err)
 		if e.Start == 0 && e.End == 0 && call.hasSpan {
 			e.Start, e.End = call.span.Start, call.span.End
 		}
-		return Value{}, e
+		return nil, e
 	}
 	parts := callParts{pos: parsed.pos, keys: map[string]Value{}}
 	for _, k := range parsed.keys {
@@ -335,35 +335,73 @@ func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) 
 		}
 	}
 	if allPos && len(parts.keys) > 0 {
-		return Value{}, errVal(call, "this macro does not take keyword arguments")
+		return nil, errVal(call, "this macro does not take keyword arguments")
 	}
 	if allKey && len(parts.pos) > 0 {
-		return Value{}, errVal(call, "this macro needs key: arguments")
+		return nil, errVal(call, "this macro needs key: arguments")
 	}
 	for _, clause := range clauses {
 		child := makeEnv(c.macroEnv)
 		if !tryBind(clause.Params, parts, child) {
 			continue
 		}
-		last := Nil
-		for _, b := range clause.Body {
-			var err error
-			last, err = evalVal(b, child, c)
-			if err != nil {
-				return Value{}, err
-			}
+		frags, err := evalSpread(clause.Body, child, c, false)
+		if err != nil {
+			return nil, err
 		}
 		var imported []Value
 		for _, a := range raw {
 			collectImported(a, nil, &imported)
 		}
-		out := hygienic(last, imported, map[string]string{}, &hygState{})
-		if !out.hasSpan && call.hasSpan {
-			out = out.withSpan(call.span.Start, call.span.End)
+		h := &hygState{}
+		out := make([]Value, len(frags))
+		for i, f := range frags {
+			out[i] = hygienic(f, imported, map[string]string{}, h)
+			if !out[i].hasSpan && call.hasSpan {
+				out[i] = out[i].withSpan(call.span.Start, call.span.End)
+			}
 		}
 		return out, nil
 	}
-	return Value{}, errValf(call, "no matching clause for %s", name)
+	return nil, errValf(call, "no matching clause for %s", name)
+}
+
+func asMacroCall(v Value, c *ctx) (name string, clauses []Clause, args []Value, ok bool) {
+	if v.k != KindList || v.vec {
+		return "", nil, nil, false
+	}
+	xs := filterComments(v.xs)
+	if len(xs) == 0 || xs[0].k != KindSymbol {
+		return "", nil, nil, false
+	}
+	name = xs[0].Name()
+	clauses, ok = c.macros[name]
+	if !ok {
+		return "", nil, nil, false
+	}
+	return name, clauses, xs[1:], true
+}
+
+func packExpr(forms []Value, call Value) Value {
+	switch len(forms) {
+	case 0:
+		out := Nil
+		if call.hasSpan {
+			out = out.withSpan(call.span.Start, call.span.End)
+		}
+		return out
+	case 1:
+		return forms[0]
+	default:
+		xs := make([]Value, 0, 2+len(forms))
+		xs = append(xs, Symbol("let"), EmptyMap())
+		xs = append(xs, forms...)
+		out := CallList(xs...)
+		if call.hasSpan {
+			out = out.withSpan(call.span.Start, call.span.End)
+		}
+		return out
+	}
 }
 
 func expandVal(v Value, env *env, c *ctx) (Value, error) {
@@ -371,6 +409,49 @@ func expandVal(v Value, env *env, c *ctx) (Value, error) {
 		return Value{}, err
 	}
 	defer c.pop()
+	xs, err := expandIn(v, env, c)
+	if err != nil {
+		return Value{}, err
+	}
+	return packExpr(xs, v), nil
+}
+
+func expandForms(forms []Value, env *env, c *ctx) ([]Value, error) {
+	var out []Value
+	for _, form := range forms {
+		if form.k == KindComment {
+			out = append(out, form)
+			continue
+		}
+		if err := c.push(); err != nil {
+			return nil, err
+		}
+		xs, err := expandIn(form, env, c)
+		c.pop()
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, xs...)
+	}
+	return out, nil
+}
+
+func expandIn(v Value, env *env, c *ctx) ([]Value, error) {
+	if name, clauses, args, ok := asMacroCall(v, c); ok {
+		frags, err := applyMacro(name, clauses, args, c, v)
+		if err != nil {
+			return nil, err
+		}
+		return expandForms(frags, env, c)
+	}
+	ex, err := expandTree(v, env, c)
+	if err != nil {
+		return nil, err
+	}
+	return []Value{ex}, nil
+}
+
+func expandTree(v Value, env *env, c *ctx) (Value, error) {
 	switch v.k {
 	case KindComment, KindInt, KindFloat, KindString, KindFn, KindQuote, KindUnquote, KindSplice, KindSymbol:
 		return v, nil
@@ -391,44 +472,138 @@ func expandVal(v Value, env *env, c *ctx) (Value, error) {
 		return out, nil
 	case KindList:
 		if v.vec {
-			xs := make([]Value, len(v.xs))
-			for i, x := range v.xs {
-				var err error
-				xs[i], err = expandVal(x, env, c)
-				if err != nil {
-					return Value{}, err
-				}
-			}
-			out := v
-			out.xs = xs
-			return out, nil
+			return expandElems(v, env, c)
 		}
 		xs := filterComments(v.xs)
 		if len(xs) == 0 {
 			return v, nil
 		}
-		head := xs[0]
-		if head.k == KindSymbol {
-			if clauses, ok := c.macros[head.Name()]; ok {
-				expanded, err := applyMacro(head.Name(), clauses, xs[1:], c, v)
-				if err != nil {
-					return Value{}, err
-				}
-				return expandVal(expanded, env, c)
+		if xs[0].k == KindSymbol {
+			switch xs[0].Name() {
+			case "let", "let!":
+				return expandLet(v, env, c)
+			case "fn":
+				return expandFn(v, env, c)
+			case "if":
+				return expandIf(v, env, c)
+			case "after":
+				return expandAfter(v, env, c)
 			}
 		}
-		outxs := make([]Value, len(v.xs))
-		for i, x := range v.xs {
-			var err error
-			outxs[i], err = expandVal(x, env, c)
-			if err != nil {
-				return Value{}, err
-			}
-		}
-		out := v
-		out.xs = outxs
-		return out, nil
+		return expandElems(v, env, c)
 	default:
 		return v, nil
 	}
+}
+
+func expandElems(v Value, env *env, c *ctx) (Value, error) {
+	xs := make([]Value, len(v.xs))
+	for i, x := range v.xs {
+		var err error
+		xs[i], err = expandVal(x, env, c)
+		if err != nil {
+			return Value{}, err
+		}
+	}
+	out := v
+	out.xs = xs
+	return out, nil
+}
+
+func expandLet(v Value, env *env, c *ctx) (Value, error) {
+	if len(v.xs) < 2 {
+		return expandElems(v, env, c)
+	}
+	binds, err := expandVal(v.xs[1], env, c)
+	if err != nil {
+		return Value{}, err
+	}
+	body, err := expandForms(v.xs[2:], env, c)
+	if err != nil {
+		return Value{}, err
+	}
+	out := v
+	out.xs = append([]Value{v.xs[0], binds}, body...)
+	return out, nil
+}
+
+func expandFn(v Value, env *env, c *ctx) (Value, error) {
+	parsed, err := parseFn(v.xs[1:])
+	if err != nil || parsed.kind != "long" {
+		return expandElems(v, env, c)
+	}
+	rebuilt := []Value{v.xs[0]}
+	for i, cl := range parsed.clauses {
+		if cl.ParamsForm != nil {
+			rebuilt = append(rebuilt, *cl.ParamsForm)
+		}
+		body, err := expandForms(cl.Body, env, c)
+		if err != nil {
+			return Value{}, err
+		}
+		rebuilt = append(rebuilt, body...)
+		if i < len(parsed.clauses)-1 {
+			rebuilt = append(rebuilt, Symbol("fn"))
+		}
+	}
+	out := v
+	out.xs = rebuilt
+	return out, nil
+}
+
+func expandIf(v Value, env *env, c *ctx) (Value, error) {
+	clauses, err := parseIfArgs(v.xs[1:])
+	if err != nil {
+		return expandElems(v, env, c)
+	}
+	for i := range clauses {
+		if clauses[i].Test != nil {
+			t, err := expandVal(*clauses[i].Test, env, c)
+			if err != nil {
+				return Value{}, err
+			}
+			clauses[i].Test = &t
+		}
+		body, err := expandForms(clauses[i].Body, env, c)
+		if err != nil {
+			return Value{}, err
+		}
+		clauses[i].Body = body
+	}
+	xs := []Value{v.xs[0]}
+	for i, cl := range clauses {
+		if i > 0 {
+			xs = append(xs, Symbol("else"))
+			if cl.Test != nil {
+				xs = append(xs, Symbol("if"))
+			}
+		}
+		if cl.Test != nil {
+			if cl.Not {
+				xs = append(xs, Symbol("not"))
+			}
+			xs = append(xs, *cl.Test)
+		}
+		xs = append(xs, cl.Body...)
+	}
+	out := v
+	out.xs = xs
+	return out, nil
+}
+
+func expandAfter(v Value, env *env, c *ctx) (Value, error) {
+	if len(v.xs) < 2 {
+		return expandElems(v, env, c)
+	}
+	dur, err := expandVal(v.xs[1], env, c)
+	if err != nil {
+		return Value{}, err
+	}
+	body, err := expandForms(v.xs[2:], env, c)
+	if err != nil {
+		return Value{}, err
+	}
+	out := v
+	out.xs = append([]Value{v.xs[0], dur}, body...)
+	return out, nil
 }

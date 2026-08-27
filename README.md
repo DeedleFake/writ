@@ -49,6 +49,14 @@ Integers are arbitrary-precision. `1` is an integer; `1.0` is a float. `+`, `-`,
 
 Lists are `[a b c]`. Maps are `[k: v]` or empty `[:]`. Mixing plain items and `k:` pairs in one `[]` is a parse error.
 
+A `defm` body is expand-time fragments. Each result is one form at the call site. A top-level `@` splices a list of forms into that sequence. In a `fn` / `let` / `if` / `after` / `on` body, and at the top of a script, a call that expands to several forms is those forms in place. In expression position they run in order and the value is the last form.
+
+```
+(defm (example @rest)
+  '(print "Example.")
+  @rest)
+```
+
 ## Import
 
 `(import "path")` evaluates another script once per runtime and returns a map of that script's top-level `def` and `defm` names.

@@ -246,6 +246,112 @@ func TestEvalMacros(t *testing.T) {
 	}
 }
 
+func TestEvalMacroFragments(t *testing.T) {
+	rt := New()
+	src := `
+(defm (example @rest)
+  '(set-prop "hit" true)
+  @rest)
+(def (f)
+  (example (set-prop "n" 7))
+  (get-prop "n"))
+(f)
+`
+	v, err := rt.Eval(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(7)) {
+		t.Fatalf("body splice: %v", v)
+	}
+	if !rt.GetProp("hit").IsTrue() {
+		t.Fatalf("first fragment: %v", rt.GetProp("hit"))
+	}
+
+	v = evals(t, `
+(defm (example @rest)
+  '(set-prop "a" 1)
+  @rest)
+(example (set-prop "b" 2))
+(get-prop "b")
+`)
+	if !v.Equal(runtime.Int64(2)) {
+		t.Fatalf("top-level splice: %v", v)
+	}
+
+	v = evals(t, `
+(defm (pair)
+  '(def (a) 1)
+  '(def (b) 2))
+(pair)
+(+ (a) (b))
+`)
+	if !v.Equal(runtime.Int64(3)) {
+		t.Fatalf("top-level defs: %v", v)
+	}
+
+	v = evals(t, `
+(defm (seq @rest) @rest)
+(+ (seq 1 2) 3)
+`)
+	if !v.Equal(runtime.Int64(5)) {
+		t.Fatalf("expression position: %v", v)
+	}
+
+	v = evals(t, `
+(defm (example @rest)
+  '(set-prop "a" 1)
+  @rest)
+(if true
+  (example (set-prop "b" 2))
+  (get-prop "b")
+  else 0)
+`)
+	if !v.Equal(runtime.Int64(2)) {
+		t.Fatalf("if body splice: %v", v)
+	}
+
+	v = evals(t, `
+(defm (example @rest)
+  '(set-prop "a" 1)
+  @rest)
+(let [x: 3]
+  (example (set-prop "b" x))
+  (get-prop "b"))
+`)
+	if !v.Equal(runtime.Int64(3)) {
+		t.Fatalf("let body splice: %v", v)
+	}
+
+	v = evals(t, `
+(defm (example @rest)
+  1
+  @rest)
+(def (f)
+  (example)
+  2)
+(f)
+`)
+	if !v.Equal(runtime.Int64(2)) {
+		t.Fatalf("empty rest: %v", v)
+	}
+
+	rt = New()
+	if _, err := rt.Eval(`
+(defm (h)
+  '(on ping () (set-prop "n" 1)))
+(h)
+`); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Fire("ping", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.GetProp("n").Equal(runtime.Int64(1)) {
+		t.Fatalf("on fragment: %v", rt.GetProp("n"))
+	}
+}
+
 func TestEvalMacroHygiene(t *testing.T) {
 	v := evals(t, `
 (defm (with-x body)

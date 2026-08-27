@@ -311,6 +311,20 @@ func TestCheckPrintAligned(t *testing.T) {
 	}
 }
 
+func TestCheckDefmFragments(t *testing.T) {
+	res := Check(`
+(defm (example @rest)
+  '(set-prop "hit" true)
+  @rest)
+(def (f)
+  (example (set-prop "n" 7))
+  (get-prop "n"))
+`)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("defm fragments: %v", res.Diagnostics)
+	}
+}
+
 func TestCheckModInt(t *testing.T) {
 	res := Check("(mod 3 2)")
 	if len(res.Diagnostics) != 0 {

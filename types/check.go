@@ -825,6 +825,32 @@ func (chk *checker) typeClause(params runtime.Params, body []runtime.Value, pare
 	return chk.arrowFrom(params, e, ret)
 }
 
+func (chk *checker) typeMacroClause(params runtime.Params, body []runtime.Value, parent typeEnv, paramsForm runtime.Value) {
+	e := parent.clone()
+	chk.bindParams(params, e)
+	saved := chk.pass
+	chk.pass = 0
+	chk.macroForms(body, e)
+	chk.pass = saved
+	chk.promoteBinds(params, e)
+	chk.macroForms(body, e)
+	chk.noteParams(paramsForm, e)
+}
+
+func (chk *checker) macroForms(body []runtime.Value, env typeEnv) Type {
+	last := NilType()
+	for _, a := range body {
+		if a.Kind() == runtime.KindSplice {
+			t := chk.typeForm(a.Inner(), env)
+			chk.expectListish(t, a)
+			last = t
+			continue
+		}
+		last = chk.typeForm(a, env)
+	}
+	return last
+}
+
 func (chk *checker) arrowFrom(params runtime.Params, env typeEnv, ret Type) Arrow {
 	if !params.Key {
 		args := make([]Type, len(params.Pats))
@@ -1659,7 +1685,7 @@ func Check(forms []runtime.Value, prog runtime.Program, cfg Config) CheckResult 
 			if !ok {
 				continue
 			}
-			chk.typeClause(d.Params, d.Body, env, d.ParamsForm)
+			chk.typeMacroClause(d.Params, d.Body, env, d.ParamsForm)
 			if d.NameForm.HasSpan() {
 				chk.note(d.NameForm, tDyn(Any()), d.Name)
 			}

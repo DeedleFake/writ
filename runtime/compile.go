@@ -239,13 +239,9 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 
 	expandBody := func(clauses []Clause) error {
 		for i := range clauses {
-			body := make([]Value, len(clauses[i].Body))
-			for j, b := range clauses[i].Body {
-				ex, err := expandVal(b, env, c)
-				if err != nil {
-					return err
-				}
-				body[j] = ex
+			body, err := expandForms(clauses[i].Body, env, c)
+			if err != nil {
+				return err
 			}
 			clauses[i].Body = body
 		}
@@ -319,18 +315,20 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 	var newBoot []Value
 	s.last.ok = false
 	for _, form := range s.boot {
-		ex, err := expandVal(form, env, c)
+		xs, err := expandForms([]Value{form}, env, c)
 		if err != nil {
 			return Program{}, err
 		}
-		took, err := takeExpanded(ex)
-		if err != nil {
-			return Program{}, err
+		for _, ex := range xs {
+			took, err := takeExpanded(ex)
+			if err != nil {
+				return Program{}, err
+			}
+			if took {
+				continue
+			}
+			newBoot = append(newBoot, ex)
 		}
-		if took {
-			continue
-		}
-		newBoot = append(newBoot, ex)
 	}
 	for name, clauses := range s.fnMap {
 		if err := expandBody(clauses); err != nil {
