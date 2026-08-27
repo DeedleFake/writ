@@ -193,7 +193,7 @@ func (m *Machine) SetPropLocked(val Value, path ...string) error {
 	return err
 }
 
-// ResetLocked clears store, handlers, and loaded modules. Caller must hold Lock.
+// ResetLocked clears store, env, macros, handlers, and loaded modules. Caller must hold Lock.
 func (m *Machine) ResetLocked() {
 	m.props = newMap()
 	m.env = nil
@@ -211,12 +211,12 @@ func (m *Machine) Expand(forms []Value) (Program, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.BeginBudget()
-	return compileForms(forms, m)
+	return compileForms(forms, m, false)
 }
 
 // ExpandLocked is Expand without taking the lock.
 func (m *Machine) ExpandLocked(forms []Value) (Program, error) {
-	return compileForms(forms, m)
+	return compileForms(forms, m, false)
 }
 
 // Eval evaluates already-parsed forms (boot forms only).
@@ -230,27 +230,28 @@ func (m *Machine) Eval(forms []Value) (Value, error) {
 // EvalLocked is Eval without taking the lock.
 func (m *Machine) EvalLocked(forms []Value) (Value, error) {
 	file := m.file
-	prog, err := compileForms(forms, m)
+	prog, err := compileForms(forms, m, true)
 	if err != nil {
 		return Value{}, asError(err).withFile(file)
 	}
-	env := makeEnv(nil)
+	env := m.env
+	if env == nil {
+		env = makeEnv(nil)
+	}
 	installFns(prog.Fns, env)
 	m.env = env
-	m.macros = toMacroTable(prog.Macros)
+	if m.macros == nil {
+		m.macros = map[string][]Clause{}
+	}
+	for name, clauses := range toMacroTable(prog.Macros) {
+		m.macros[name] = clauses
+	}
 	for i := range prog.Handlers {
 		prog.Handlers[i].env = env
 	}
 	c := newCtx(m, env, m.macros)
 	v, err := evalForms(prog.Boot, env, c)
-	var hs []Handler
-	for _, path := range m.loadedOrder {
-		if l := m.loaded[path]; l != nil {
-			hs = append(hs, l.handlers...)
-		}
-	}
-	hs = append(hs, prog.Handlers...)
-	m.handlers = hs
+	m.handlers = append(m.handlers, prog.Handlers...)
 	if err != nil {
 		return v, asError(err).withFile(file)
 	}
@@ -259,7 +260,7 @@ func (m *Machine) EvalLocked(forms []Value) (Value, error) {
 
 // EvalModule evaluates an imported script without replacing the caller's env.
 func (m *Machine) EvalModule(path string, forms []Value) (Value, error) {
-	prog, err := compileForms(forms, m)
+	prog, err := compileForms(forms, m, false)
 	if err != nil {
 		return Value{}, asError(err).withFile(path)
 	}

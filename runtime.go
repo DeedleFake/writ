@@ -211,7 +211,7 @@ func (rt *Runtime) SetAfterError(fn func(error)) {
 	rt.m.SetAfterError(fn)
 }
 
-// Lookup returns a top-level binding from the last Eval.
+// Lookup returns a top-level binding.
 func (rt *Runtime) Lookup(name string) (runtime.Value, bool) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
@@ -232,7 +232,7 @@ func (rt *Runtime) SetProp(val runtime.Value, path ...string) error {
 	return rt.m.SetPropLocked(val, path...)
 }
 
-// Reset clears the script store, handlers, and import cache.
+// Reset clears the script store, top-level env, macros, handlers, and import cache.
 func (rt *Runtime) Reset() {
 	rt.m.Lock()
 	defer rt.m.Unlock()
@@ -271,7 +271,11 @@ func (rt *Runtime) CheckFile(path string) types.CheckResult {
 	return rt.checkSrc(string(data), abs)
 }
 
-// Eval compiles and evaluates src (boot forms only).
+// Eval compiles and evaluates src (boot forms only). Defs, macros, and
+// handlers persist on this runtime until [Runtime.Reset]; later Eval
+// calls expand using those macros. Redefining a function replaces it
+// (clauses are not merged across calls). A name cannot be both a
+// function and a macro. (on ...) handlers accumulate across Eval calls.
 func (rt *Runtime) Eval(src string) (runtime.Value, error) {
 	forms, err := parser.Parse(src)
 	if err != nil {
@@ -287,6 +291,8 @@ func (rt *Runtime) Eval(src string) (runtime.Value, error) {
 }
 
 // EvalFile evaluates a file's boot forms. It does not call main.
+// Persistence is the same as [Runtime.Eval]; call [Runtime.Reset]
+// before reloading a file if (on ...) handlers should not stack.
 func (rt *Runtime) EvalFile(path string) (runtime.Value, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {

@@ -11,11 +11,17 @@ go install deedles.dev/writ/cmd/writ@latest
 ## CLI
 
 ```
+writ                        # REPL
+writ repl                   # REPL
+writ -I DIR                 # REPL with import search path
+writ repl -I DIR            # same
 writ run FILE.writ
 writ fmt FILE.writ          # formatted source on stdout
 writ fmt -w FILE.writ       # rewrite the file
 writ check FILE.writ        # type-check; non-zero exit on error
 ```
+
+With no arguments, `writ` starts a REPL (`writ repl` is the same). Unclosed `(`, `[`, strings, and tick symbols continue on the next line. `-I DIR` sets the import search path, as with `writ run`, and is valid on `writ` or `writ repl`.
 
 `writ run` evaluates top-level forms, then calls `main` if it was defined. The CLI registers `print`, which writes to stdout.
 
@@ -44,7 +50,7 @@ Lists are `[a b c]`. Maps are `[k: v]` or empty `[:]`. Mixing plain items and `k
 
 `(import "path")` evaluates another script once per runtime and returns a map of that script's top-level `def` and `defm` names.
 
-Relative paths are resolved from the importing file. Search directories can be set on the runtime (`WithSearchPath`) or with `writ run -I DIR` / `writ check -I DIR`.
+Relative paths are resolved from the importing file. Search directories can be set on the runtime (`WithSearchPath`) or with `writ run -I DIR` / `writ check -I DIR` / `writ repl -I DIR`.
 
 Resolution order for a path without a known suffix:
 

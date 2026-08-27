@@ -139,6 +139,30 @@ func TestParseErrors(t *testing.T) {
 	}
 }
 
+func TestIncomplete(t *testing.T) {
+	if Incomplete(nil) {
+		t.Fatal("nil")
+	}
+	if !Incomplete(runtime.ErrorIncomplete(0, 1, "xyz")) {
+		t.Fatal("flag")
+	}
+	if Incomplete(runtime.ErrorAt(0, 1, "missing )")) {
+		t.Fatal("message text is not enough")
+	}
+	for _, src := range []string{"(", "[", `"abc`, "`abc", "'", ",", "@", "(+ 1", "[k:", `'(`} {
+		_, err := Parse(src)
+		if !Incomplete(err) {
+			t.Errorf("%q: want incomplete, got %v", src, err)
+		}
+	}
+	for _, src := range []string{")", "]", "(+ 1 2)", "[k:]", "[a k: 1]", "", "; comment"} {
+		_, err := Parse(src)
+		if Incomplete(err) {
+			t.Errorf("%q: unexpected incomplete %v", src, err)
+		}
+	}
+}
+
 func TestParseTrueFalseNil(t *testing.T) {
 	for _, name := range []string{"true", "false", "nil"} {
 		v := parse1(t, name)

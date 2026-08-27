@@ -8,8 +8,11 @@ import (
 
 	"deedles.dev/writ"
 	"deedles.dev/writ/parser"
+	"deedles.dev/writ/repl"
 	"deedles.dev/writ/runtime"
 )
+
+const usage = "usage: writ [repl] [-I DIR] | writ <run|fmt|check> [flags] FILE.writ"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -20,20 +23,49 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("usage: writ <run|fmt|check> [flags] FILE.writ")
+		return cmdRepl(nil)
 	}
 	cmd := args[0]
-	args = args[1:]
 	switch cmd {
 	case "run":
-		return cmdRun(args)
+		return cmdRun(args[1:])
 	case "fmt":
-		return cmdFmt(args)
+		return cmdFmt(args[1:])
 	case "check":
-		return cmdCheck(args)
+		return cmdCheck(args[1:])
+	case "repl":
+		return cmdRepl(args[1:])
 	default:
-		return fmt.Errorf("usage: writ <run|fmt|check> [flags] FILE.writ")
+		if cmd != "" && cmd[0] == '-' {
+			return cmdRepl(args)
+		}
+		return fmt.Errorf("%s", usage)
 	}
+}
+
+func cmdRepl(args []string) error {
+	var search []string
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		if a == "-I" && i+1 < len(args) {
+			search = append(search, args[i+1])
+			i++
+			continue
+		}
+		return fmt.Errorf("repl: unexpected %s", a)
+	}
+	opts := []writ.Option{writ.WithStdout(os.Stdout)}
+	if len(search) > 0 {
+		opts = append(opts, writ.WithSearchPath(search...))
+	}
+	rt := writ.New(opts...)
+	rt.RegisterPrint()
+	return repl.Run(repl.Options{
+		In:  os.Stdin,
+		Out: os.Stdout,
+		Err: os.Stderr,
+		RT:  rt,
+	})
 }
 
 func parseFileAndSearch(args []string) (file string, search []string, err error) {

@@ -117,6 +117,51 @@ func TestFmtWriteAndSymlink(t *testing.T) {
 	}
 }
 
+func TestCLIRepl(t *testing.T) {
+	bin := buildCLI(t)
+	for _, args := range [][]string{nil, {"repl"}} {
+		cmd := exec.Command(bin, args...)
+		cmd.Stdin = strings.NewReader("(+ 1 2)\n")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("args %v: %v\n%s", args, err, out)
+		}
+		if !strings.Contains(string(out), "3") {
+			t.Fatalf("args %v out %q", args, out)
+		}
+	}
+
+	bad := exec.Command(bin, "nope")
+	out, err := bad.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected usage error")
+	}
+	if !strings.Contains(string(out), "repl") {
+		t.Fatalf("usage %q", out)
+	}
+}
+
+func TestCLIReplSearchPath(t *testing.T) {
+	bin := buildCLI(t)
+	dir := t.TempDir()
+	lib := filepath.Join(dir, "lib.writ")
+	if err := os.WriteFile(lib, []byte("(def (n) 3)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	in := "(print ((get (import \"lib.writ\") \"n\")))\n"
+	for _, args := range [][]string{{"repl", "-I", dir}, {"-I", dir}} {
+		cmd := exec.Command(bin, args...)
+		cmd.Stdin = strings.NewReader(in)
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("args %v: %v\n%s", args, err, out)
+		}
+		if !strings.Contains(string(out), "3") {
+			t.Fatalf("args %v out %q", args, out)
+		}
+	}
+}
+
 func TestOffsetLineCol(t *testing.T) {
 	src := "a\nbc"
 	line, col := offsetLineCol(src, 3) // 'c' is index 3

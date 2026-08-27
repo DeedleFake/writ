@@ -5,10 +5,11 @@ import "fmt"
 // Error is a parse, type, or evaluation error. Start and End are byte
 // offsets into the source when known.
 type Error struct {
-	File    string
-	Start   int
-	End     int
-	Message string
+	File       string
+	Start      int
+	End        int
+	Message    string
+	incomplete bool
 }
 
 func (e *Error) Error() string {
@@ -86,6 +87,16 @@ func Errorf(format string, args ...any) *Error { return errf(format, args...) }
 
 // ErrorAt builds an error covering a byte range.
 func ErrorAt(start, end int, msg string) *Error { return errAt(start, end, msg) }
+
+// ErrorIncomplete is [ErrorAt] for a source prefix that needs more input.
+func ErrorIncomplete(start, end int, msg string) *Error {
+	e := errAt(start, end, msg)
+	e.incomplete = true
+	return e
+}
+
+// IsIncomplete reports whether this is an incomplete-parse error.
+func (e *Error) IsIncomplete() bool { return e != nil && e.incomplete }
 
 // AsError converts err to *Error.
 func AsError(err error) *Error { return asError(err) }

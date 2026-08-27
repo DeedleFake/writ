@@ -258,6 +258,119 @@ func TestEvalLetBang(t *testing.T) {
 	}
 }
 
+func TestEvalPersistsDefsAndMacros(t *testing.T) {
+	rt := New()
+	if _, err := rt.Eval("(def (inc n) (+ n 1))"); err != nil {
+		t.Fatal(err)
+	}
+	v, err := rt.Eval("(inc 4)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(5)) {
+		t.Fatalf("inc: %v", v)
+	}
+	if _, err := rt.Eval(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`); err != nil {
+		t.Fatal(err)
+	}
+	v, err = rt.Eval("(unless false 42)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(42)) {
+		t.Fatalf("unless: %v", v)
+	}
+	if _, err := rt.Eval(`(defm (def-answer) '(def (answer) 42))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Eval("(def-answer)"); err != nil {
+		t.Fatal(err)
+	}
+	v, err = rt.Eval("(answer)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(42)) {
+		t.Fatalf("answer: %v", v)
+	}
+}
+
+func TestEvalFnMacroClashAcrossCalls(t *testing.T) {
+	rt := New()
+	if _, err := rt.Eval("(def (f n) n)"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := rt.Eval("(defm (f n) n)")
+	if err == nil || !strings.Contains(err.Error(), "both") {
+		t.Fatalf("def then defm: %v", err)
+	}
+	rt2 := New()
+	if _, err := rt2.Eval("(defm (g n) n)"); err != nil {
+		t.Fatal(err)
+	}
+	_, err = rt2.Eval("(def (g n) n)")
+	if err == nil || !strings.Contains(err.Error(), "both") {
+		t.Fatalf("defm then def: %v", err)
+	}
+}
+
+func TestEvalResetAndOnAccumulate(t *testing.T) {
+	rt := New()
+	if _, err := rt.Eval("(def (inc n) (+ n 1))"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Eval(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Eval(`(set-prop "n" 0)`); err != nil {
+		t.Fatal(err)
+	}
+	on := `(on ping () (update-prop "n" (fn + #1 1)))`
+	if _, err := rt.Eval(on); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Eval(on); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Fire("ping", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.GetProp("n").Equal(runtime.Int64(2)) {
+		t.Fatalf("accumulate: %v", rt.GetProp("n"))
+	}
+	rt.Reset()
+	if _, ok := rt.Lookup("inc"); ok {
+		t.Fatal("lookup after reset")
+	}
+	if _, err := rt.Eval("(inc 1)"); err == nil {
+		t.Fatal("inc after reset")
+	}
+	if _, err := rt.Eval("(unless false 1)"); err == nil {
+		t.Fatal("unless after reset")
+	}
+	if !rt.GetProp("n").IsNil() {
+		t.Fatal("prop after reset")
+	}
+	if err := rt.Fire("ping", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.GetProp("n").IsNil() {
+		t.Fatal("on after reset")
+	}
+	if _, err := rt.Eval(`(set-prop "n" 0)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Eval(on); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Fire("ping", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.GetProp("n").Equal(runtime.Int64(1)) {
+		t.Fatalf("on after reset eval: %v", rt.GetProp("n"))
+	}
+}
+
 func TestEvalProps(t *testing.T) {
 	rt := New()
 	if _, err := rt.Eval(`(set-prop "hits" 0)`); err != nil {

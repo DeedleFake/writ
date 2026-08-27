@@ -205,6 +205,43 @@ func TestImportedHandlersUseLibEnv(t *testing.T) {
 	}
 }
 
+func TestEvalFileOnAccumulates(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "on.writ")
+	if err := os.WriteFile(src, []byte("(on ping () (update-prop \"n\" (fn + #1 1)))\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := New()
+	if err := rt.SetProp(runtime.Int64(0), "n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.EvalFile(src); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.EvalFile(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Fire("ping", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.GetProp("n").Equal(runtime.Int64(2)) {
+		t.Fatalf("EvalFile accumulate: %v", rt.GetProp("n"))
+	}
+	rt.Reset()
+	if err := rt.SetProp(runtime.Int64(0), "n"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.EvalFile(src); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Fire("ping", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !rt.GetProp("n").Equal(runtime.Int64(1)) {
+		t.Fatalf("EvalFile after Reset: %v", rt.GetProp("n"))
+	}
+}
+
 func TestFirePositionalWithoutRegisterEvent(t *testing.T) {
 	rt := New()
 	if _, err := rt.Eval(`(on ping (who) (set-prop "w" who))`); err != nil {

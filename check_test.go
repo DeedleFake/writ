@@ -90,6 +90,24 @@ func TestCheckUnknownName(t *testing.T) {
 	}
 }
 
+func TestCheckDoesNotSeeEvalBindings(t *testing.T) {
+	rt := New()
+	if _, err := rt.Eval("(def (inc n) (+ n 1))"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Eval(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`); err != nil {
+		t.Fatal(err)
+	}
+	res := rt.Check("(inc 4)")
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("Check should not see Eval defs")
+	}
+	res = rt.Check("(unless false 1)")
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("Check should not see Eval macros")
+	}
+}
+
 func TestCheckHints(t *testing.T) {
 	res := Check("(+ 1 2)")
 	if len(res.Hints) == 0 {

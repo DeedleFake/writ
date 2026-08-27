@@ -1,6 +1,7 @@
 package parser
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 
@@ -52,6 +53,13 @@ func Parse(src string) ([]runtime.Value, error) {
 		nl = p.skipCount()
 	}
 	return forms, nil
+}
+
+// Incomplete reports whether a [Parse] error means src needs more input
+// (unclosed list, map, string, tick symbol, or quote).
+func Incomplete(err error) bool {
+	var e *runtime.Error
+	return errors.As(err, &e) && e.IsIncomplete()
 }
 
 func (p *parser) skipCount() int {
@@ -116,7 +124,7 @@ func (p *parser) read() (runtime.Value, error) {
 		if start < 0 {
 			start = 0
 		}
-		return runtime.Value{}, runtime.ErrorAt(start, p.pos(), "unexpected end of script")
+		return runtime.Value{}, runtime.ErrorIncomplete(start, p.pos(), "unexpected end of script")
 	}
 	switch t.Kind {
 	case scanner.TokComment:
@@ -202,7 +210,7 @@ func (p *parser) readDelimited(close scanner.TokenKind, closeCh byte) (runtime.V
 		p.skip()
 		t := p.tok()
 		if t.Kind == scanner.TokEOF {
-			return runtime.Value{}, runtime.ErrorAt(open.Start, p.pos(), "missing "+string(closeCh))
+			return runtime.Value{}, runtime.ErrorIncomplete(open.Start, p.pos(), "missing "+string(closeCh))
 		}
 		if t.Kind == close {
 			p.advance()
@@ -277,7 +285,7 @@ func finishBracket(xs []runtime.Value) (runtime.Value, error) {
 func unquoteTick(t scanner.Token) (string, error) {
 	s := t.Text
 	if len(s) < 2 || s[0] != '`' || s[len(s)-1] != '`' || !closedQuoted(s, '`') {
-		return "", runtime.ErrorAt(t.Start, t.End, "unterminated symbol")
+		return "", runtime.ErrorIncomplete(t.Start, t.End, "unterminated symbol")
 	}
 	inner := s[1 : len(s)-1]
 	var out strings.Builder
@@ -298,7 +306,7 @@ func unquoteTick(t scanner.Token) (string, error) {
 func unquoteString(t scanner.Token) (string, error) {
 	s := t.Text
 	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' || !closedQuoted(s, '"') {
-		return "", runtime.ErrorAt(t.Start, t.End, "unterminated string")
+		return "", runtime.ErrorIncomplete(t.Start, t.End, "unterminated string")
 	}
 	inner := s[1 : len(s)-1]
 	var out strings.Builder

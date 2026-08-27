@@ -139,7 +139,26 @@ func (s *compileState) addOn(ev Value, paramsForm Value, body []Value) error {
 	return nil
 }
 
-func compileForms(forms []Value, rt *Machine) (Program, error) {
+func sessionClash(rt *Machine, session bool, name string, asMacro bool) error {
+	if !session || rt == nil {
+		return nil
+	}
+	if asMacro {
+		if rt.env != nil {
+			if v, ok := rt.env.get(name); ok && v.k == KindFn {
+				return errf("%s cannot be both a function and a macro", name)
+			}
+		}
+		return nil
+	}
+	if _, has := rt.macros[name]; has {
+		return errf("%s cannot be both a function and a macro", name)
+	}
+	return nil
+}
+
+// session is true for Eval so later lines expand with macros from earlier Evals.
+func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 	s := newCompileState()
 	for _, form := range forms {
 		if form.k == KindComment {
@@ -161,6 +180,9 @@ func compileForms(forms []Value, rt *Machine) (Program, error) {
 		if got, ok, err := asDefForm(form, "def"); err != nil {
 			return Program{}, err
 		} else if ok {
+			if err := sessionClash(rt, session, got.Name, false); err != nil {
+				return Program{}, err
+			}
 			if _, has := s.macroMap[got.Name]; has {
 				return Program{}, errf("%s cannot be both a function and a macro", got.Name)
 			}
@@ -172,6 +194,9 @@ func compileForms(forms []Value, rt *Machine) (Program, error) {
 		if got, ok, err := asDefForm(form, "defm"); err != nil {
 			return Program{}, err
 		} else if ok {
+			if err := sessionClash(rt, session, got.Name, true); err != nil {
+				return Program{}, err
+			}
 			if _, has := s.fnMap[got.Name]; has {
 				return Program{}, errf("%s cannot be both a function and a macro", got.Name)
 			}
@@ -188,6 +213,9 @@ func compileForms(forms []Value, rt *Machine) (Program, error) {
 	}
 
 	env := makeEnv(nil)
+	if session && rt != nil && rt.env != nil {
+		env = makeEnv(rt.env)
+	}
 	var fns []NamedFn
 	for name, clauses := range s.fnMap {
 		fns = append(fns, NamedFn{Name: name, Clauses: clauses, NameForm: s.fnNameForm[name]})
@@ -197,7 +225,15 @@ func compileForms(forms []Value, rt *Machine) (Program, error) {
 		macros = append(macros, NamedFn{Name: name, Clauses: clauses, NameForm: s.macroNameForm[name]})
 	}
 	installFns(fns, env)
-	macroTable := toMacroTable(macros)
+	macroTable := map[string][]Clause{}
+	if session && rt != nil {
+		for k, v := range rt.macros {
+			macroTable[k] = v
+		}
+	}
+	for k, v := range toMacroTable(macros) {
+		macroTable[k] = v
+	}
 	c := newCtx(rt, env, macroTable)
 
 	expandBody := func(clauses []Clause) error {
@@ -219,6 +255,9 @@ func compileForms(forms []Value, rt *Machine) (Program, error) {
 		if got, ok, err := asDefForm(form, "def"); err != nil {
 			return false, err
 		} else if ok {
+			if err := sessionClash(rt, session, got.Name, false); err != nil {
+				return false, err
+			}
 			if _, has := macroTable[got.Name]; has {
 				return false, errf("%s cannot be both a function and a macro", got.Name)
 			}
@@ -234,6 +273,9 @@ func compileForms(forms []Value, rt *Machine) (Program, error) {
 		if got, ok, err := asDefForm(form, "defm"); err != nil {
 			return false, err
 		} else if ok {
+			if err := sessionClash(rt, session, got.Name, true); err != nil {
+				return false, err
+			}
 			if _, has := s.fnMap[got.Name]; has {
 				return false, errf("%s cannot be both a function and a macro", got.Name)
 			}
