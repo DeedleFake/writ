@@ -12,14 +12,17 @@ go install deedles.dev/writ/cmd/writ@latest
 
 ```
 writ                        # REPL
+writ help                   # list commands
+writ help run               # command help
 writ repl                   # REPL
 writ -I DIR                 # REPL with import search path
-writ repl -I DIR            # same
 writ run FILE.writ
 writ fmt FILE.writ          # formatted source on stdout
 writ fmt -w FILE.writ       # rewrite the file
 writ check FILE.writ        # type-check; non-zero exit on error
 ```
+
+`writ help` and `writ -h` / `writ --help` print the same overview. `writ help <command>` and `writ <command> -h` print the same command help.
 
 With no arguments, `writ` starts a REPL (`writ repl` is the same). Unclosed `(`, `[`, strings, and tick symbols continue on the next line. `-I DIR` sets the import search path, as with `writ run`, and is valid on `writ` or `writ repl`. When stdin and stdout are a terminal, the REPL uses line editing, history, and tab completion of keywords and builtins. History is stored under the user config directory. Ctrl+C cancels the current line. Ctrl+Z is ignored (it does not suspend).
 

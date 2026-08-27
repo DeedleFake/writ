@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -12,8 +13,6 @@ import (
 	"deedles.dev/writ/repl"
 	"deedles.dev/writ/runtime"
 )
-
-const usage = "usage: writ [repl] [-I DIR] | writ <run|fmt|check> [flags] FILE.writ"
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -26,8 +25,9 @@ func run(args []string) error {
 	if len(args) == 0 {
 		return cmdRepl(nil)
 	}
-	cmd := args[0]
-	switch cmd {
+	switch args[0] {
+	case "help", "-h", "-help", "--help":
+		return cmdHelp(args[1:])
 	case "run":
 		return cmdRun(args[1:])
 	case "fmt":
@@ -37,28 +37,127 @@ func run(args []string) error {
 	case "repl":
 		return cmdRepl(args[1:])
 	default:
-		if cmd != "" && cmd[0] == '-' {
+		if args[0] != "" && args[0][0] == '-' {
 			return cmdRepl(args)
 		}
-		return fmt.Errorf("%s", usage)
+		return fmt.Errorf("writ %s: unknown command\nRun 'writ help' for usage.", args[0])
 	}
 }
 
-func cmdRepl(args []string) error {
-	var search []string
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "-I" && i+1 < len(args) {
-			search = append(search, args[i+1])
-			i++
-			continue
-		}
-		return fmt.Errorf("repl: unexpected %s", a)
+const rootHelp = `Writ is a Lisp interpreter.
+
+Usage:
+
+	writ <command> [arguments]
+
+The commands are:
+
+	repl        start an interactive session
+	run         evaluate a script
+	fmt         format a script
+	check       type-check a script
+
+Use "writ help <command>" for more information about a command.
+
+With no arguments, writ starts a REPL.
+`
+
+var commandHelp = map[string]string{
+	"repl": `usage: writ repl [-I directory]
+
+Repl starts an interactive session. With no command, writ also starts a REPL.
+
+The -I flag adds a directory to the import search path. It may be repeated.
+
+When stdin and stdout are a terminal, the REPL uses line editing, history,
+and tab completion. Ctrl+C cancels the current line.
+`,
+	"run": `usage: writ run [-I directory] FILE.writ
+
+Run evaluates FILE.writ, then calls main if it was defined.
+
+The -I flag adds a directory to the import search path. It may be repeated.
+`,
+	"fmt": `usage: writ fmt [-w] FILE.writ
+
+Fmt writes FILE.writ in canonical form to stdout.
+
+The -w flag writes the result back to FILE.writ instead of stdout.
+`,
+	"check": `usage: writ check [-I directory] FILE.writ
+
+Check type-checks FILE.writ and prints diagnostics.
+
+The -I flag adds a directory to the import search path. It may be repeated.
+`,
+}
+
+func cmdHelp(args []string) error {
+	if len(args) == 0 {
+		fmt.Fprint(os.Stdout, rootHelp)
+		return nil
 	}
-	opts := []writ.Option{writ.WithStdout(os.Stdout)}
+	switch args[0] {
+	case "-h", "-help", "--help":
+		fmt.Fprint(os.Stdout, rootHelp)
+		return nil
+	}
+	text, ok := commandHelp[args[0]]
+	if !ok {
+		return fmt.Errorf("writ help %s: unknown help topic. Run 'writ help'.", args[0])
+	}
+	fmt.Fprint(os.Stdout, text)
+	return nil
+}
+
+func newFlagSet(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.Usage = func() {}
+	return fs
+}
+
+func parseFlags(fs *flag.FlagSet, args []string, topic string) (ok bool, err error) {
+	if err := fs.Parse(args); err != nil {
+		if err == flag.ErrHelp {
+			fmt.Fprint(os.Stdout, commandHelp[topic])
+			return false, nil
+		}
+		return false, fmt.Errorf("%v\nRun 'writ help %s' for usage.", err, topic)
+	}
+	return true, nil
+}
+
+func addSearch(fs *flag.FlagSet) *[]string {
+	var dirs []string
+	fs.Func("I", "search `directory` for imports", func(s string) error {
+		dirs = append(dirs, s)
+		return nil
+	})
+	return &dirs
+}
+
+func withSearch(opts []writ.Option, search []string) []writ.Option {
 	if len(search) > 0 {
 		opts = append(opts, writ.WithSearchPath(search...))
 	}
+	return opts
+}
+
+func cmdRepl(args []string) error {
+	fs := newFlagSet("repl")
+	search := addSearch(fs)
+	ok, err := parseFlags(fs, args, "repl")
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return nil
+	}
+	if fs.NArg() != 0 {
+		return fmt.Errorf("repl: unexpected %s\nRun 'writ help repl' for usage.", fs.Arg(0))
+	}
+	opts := withSearch([]writ.Option{writ.WithStdout(os.Stdout)}, *search)
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
 	return (repl.REPL{
@@ -69,35 +168,21 @@ func cmdRepl(args []string) error {
 	}).Run(context.Background())
 }
 
-func parseFileAndSearch(args []string) (file string, search []string, err error) {
-	for i := 0; i < len(args); i++ {
-		a := args[i]
-		if a == "-I" && i+1 < len(args) {
-			search = append(search, args[i+1])
-			i++
-			continue
-		}
-		if file == "" && a != "" && a[0] != '-' {
-			file = a
-			continue
-		}
-		return "", nil, fmt.Errorf("unexpected %s", a)
-	}
-	return file, search, nil
-}
-
 func cmdRun(args []string) error {
-	file, search, err := parseFileAndSearch(args)
+	fs := newFlagSet("run")
+	search := addSearch(fs)
+	ok, err := parseFlags(fs, args, "run")
 	if err != nil {
-		return fmt.Errorf("run: %w", err)
+		return err
 	}
-	if file == "" {
-		return fmt.Errorf("writ run FILE.writ")
+	if !ok {
+		return nil
 	}
-	opts := []writ.Option{writ.WithStdout(os.Stdout)}
-	if len(search) > 0 {
-		opts = append(opts, writ.WithSearchPath(search...))
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: writ run [-I directory] FILE.writ\nRun 'writ help run' for usage.")
 	}
+	file := fs.Arg(0)
+	opts := withSearch([]writ.Option{writ.WithStdout(os.Stdout)}, *search)
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
 	if _, err := rt.EvalFile(file); err != nil {
@@ -111,22 +196,19 @@ func cmdRun(args []string) error {
 }
 
 func cmdFmt(args []string) error {
-	write := false
-	var file string
-	for _, a := range args {
-		if a == "-w" {
-			write = true
-			continue
-		}
-		if file == "" && a != "" && a[0] != '-' {
-			file = a
-			continue
-		}
-		return fmt.Errorf("fmt: unexpected %s", a)
+	fs := newFlagSet("fmt")
+	write := fs.Bool("w", false, "write result to FILE.writ instead of stdout")
+	ok, err := parseFlags(fs, args, "fmt")
+	if err != nil {
+		return err
 	}
-	if file == "" {
-		return fmt.Errorf("writ fmt [-w] FILE.writ")
+	if !ok {
+		return nil
 	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: writ fmt [-w] FILE.writ\nRun 'writ help fmt' for usage.")
+	}
+	file := fs.Arg(0)
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return err
@@ -135,7 +217,7 @@ func cmdFmt(args []string) error {
 	if err != nil {
 		return err
 	}
-	if write {
+	if *write {
 		return writeFileAtomic(file, text)
 	}
 	_, err = os.Stdout.WriteString(text)
@@ -181,21 +263,24 @@ func writeFileAtomic(path, text string) error {
 }
 
 func cmdCheck(args []string) error {
-	file, search, err := parseFileAndSearch(args)
+	fs := newFlagSet("check")
+	search := addSearch(fs)
+	ok, err := parseFlags(fs, args, "check")
 	if err != nil {
-		return fmt.Errorf("check: %w", err)
+		return err
 	}
-	if file == "" {
-		return fmt.Errorf("writ check FILE.writ")
+	if !ok {
+		return nil
 	}
+	if fs.NArg() != 1 {
+		return fmt.Errorf("usage: writ check [-I directory] FILE.writ\nRun 'writ help check' for usage.")
+	}
+	file := fs.Arg(0)
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return err
 	}
-	opts := []writ.Option{}
-	if len(search) > 0 {
-		opts = append(opts, writ.WithSearchPath(search...))
-	}
+	opts := withSearch(nil, *search)
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
 	res := rt.CheckFile(file)

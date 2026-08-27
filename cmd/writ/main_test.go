@@ -136,7 +136,7 @@ func TestCLIRepl(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected usage error")
 	}
-	if !strings.Contains(string(out), "repl") {
+	if !strings.Contains(string(out), "unknown command") || !strings.Contains(string(out), "writ help") {
 		t.Fatalf("usage %q", out)
 	}
 }
@@ -160,6 +160,50 @@ func TestCLIReplSearchPath(t *testing.T) {
 			t.Fatalf("args %v out %q", args, out)
 		}
 	}
+}
+
+func TestCLIHelp(t *testing.T) {
+	bin := buildCLI(t)
+	root := cliOut(t, bin, "help")
+	if !strings.Contains(root, "The commands are:") {
+		t.Fatalf("root help %q", root)
+	}
+	for _, args := range [][]string{{"-h"}, {"--help"}, {"-help"}, {"help", "-h"}} {
+		got := cliOut(t, bin, args...)
+		if got != root {
+			t.Fatalf("%v: %q != help", args, got)
+		}
+	}
+	for _, topic := range []string{"repl", "run", "fmt", "check"} {
+		want := cliOut(t, bin, "help", topic)
+		if !strings.Contains(want, "usage: writ "+topic) {
+			t.Fatalf("help %s: %q", topic, want)
+		}
+		for _, args := range [][]string{{topic, "-h"}, {topic, "--help"}} {
+			got := cliOut(t, bin, args...)
+			if got != want {
+				t.Fatalf("%v: %q != help %s", args, got, topic)
+			}
+		}
+	}
+	cmd := exec.Command(bin, "help", "nope")
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatal("expected unknown topic")
+	}
+	if !strings.Contains(string(out), "unknown help topic") {
+		t.Fatalf("topic %q", out)
+	}
+}
+
+func cliOut(t *testing.T, bin string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command(bin, args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("args %v: %v\n%s", args, err, out)
+	}
+	return string(out)
 }
 
 func TestOffsetLineCol(t *testing.T) {
