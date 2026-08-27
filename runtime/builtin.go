@@ -17,7 +17,7 @@ func asNum(v Value, ctx string) (kind Kind, i *big.Int, f float64, err error) {
 	case KindInt:
 		return KindInt, v.asBig(), 0, nil
 	case KindFloat:
-		return KindFloat, nil, v.f, nil
+		return KindFloat, nil, v.floatVal(), nil
 	default:
 		return 0, nil, 0, errf("%s needs a number", ctx)
 	}
@@ -40,11 +40,11 @@ func asName(v Value) (string, error) {
 
 func asPath(v Value, ctx string) ([]string, error) {
 	if v.k == KindList {
-		if len(v.xs) == 0 {
+		if len(v.Items()) == 0 {
 			return nil, errf("%s needs a key", ctx)
 		}
-		out := make([]string, len(v.xs))
-		for i, x := range v.xs {
+		out := make([]string, len(v.Items()))
+		for i, x := range v.Items() {
 			s, err := asName(x)
 			if err != nil {
 				return nil, err
@@ -71,7 +71,7 @@ func allInt(args []Value) bool {
 
 func allSmallInt(args []Value) bool {
 	for _, a := range args {
-		if a.k != KindInt || a.big != nil {
+		if a.k != KindInt || a.bigInt() != nil {
 			return false
 		}
 	}
@@ -84,7 +84,7 @@ func addSmall(args []Value) (Value, bool) {
 	}
 	var sum int64
 	for _, a := range args {
-		n := a.i
+		n := a.n
 		if n > 0 && sum > maxInt64-n {
 			return Value{}, false
 		}
@@ -102,7 +102,7 @@ func mulSmall(args []Value) (Value, bool) {
 	}
 	prod := int64(1)
 	for _, a := range args {
-		n := a.i
+		n := a.n
 		if n != 0 && prod != 0 {
 			if prod > 0 {
 				if n > 0 && prod > maxInt64/n {
@@ -209,8 +209,8 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		}
 		if len(args) == 1 {
 			if args[0].k == KindInt {
-				if args[0].big == nil && args[0].i != minInt64 {
-					return Int64(-args[0].i), nil
+				if args[0].bigInt() == nil && args[0].n != minInt64 {
+					return Int64(-args[0].n), nil
 				}
 				return Int(new(big.Int).Neg(args[0].asBig())), nil
 			}
@@ -219,10 +219,10 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		}
 		if allInt(args) {
 			if allSmallInt(args) {
-				acc := args[0].i
+				acc := args[0].n
 				ok := true
 				for _, a := range args[1:] {
-					n := a.i
+					n := a.n
 					if n < 0 && acc > maxInt64+n {
 						ok = false
 						break
@@ -308,7 +308,7 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		if args[0].k == KindInt {
 			return Int(new(big.Int).Abs(args[0].asBig())), nil
 		}
-		return Float(math.Abs(args[0].f)), nil
+		return Float(math.Abs(args[0].floatVal())), nil
 	case "min":
 		if len(args) == 0 {
 			return Value{}, errf("%s needs a number", name)
@@ -375,7 +375,7 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		if args[0].k == KindInt {
 			return args[0], nil
 		}
-		return Float(math.Floor(args[0].f)), nil
+		return Float(math.Floor(args[0].floatVal())), nil
 	case "ceil":
 		if len(args) == 0 || !args[0].IsNum() {
 			return Value{}, errf("%s needs a number", name)
@@ -383,7 +383,7 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		if args[0].k == KindInt {
 			return args[0], nil
 		}
-		return Float(math.Ceil(args[0].f)), nil
+		return Float(math.Ceil(args[0].floatVal())), nil
 	case "=":
 		if len(args) < 2 {
 			return Bool(false), nil
@@ -430,9 +430,9 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		case KindString:
 			return Int64(int64(len(a.s))), nil
 		case KindList:
-			return Int64(int64(len(a.xs))), nil
+			return Int64(int64(len(a.Items()))), nil
 		case KindMap:
-			return Int64(int64(a.mp.len())), nil
+			return Int64(int64(a.mapData().len())), nil
 		default:
 			return Value{}, errMsg("len needs a string, a list, or a map")
 		}
@@ -442,9 +442,9 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		}
 		x := args[0]
 		if len(args) > 1 && args[1].k == KindList {
-			out := make([]Value, 1+len(args[1].xs))
+			out := make([]Value, 1+len(args[1].Items()))
 			out[0] = x
-			copy(out[1:], args[1].xs)
+			copy(out[1:], args[1].Items())
 			return CallList(out...), nil
 		}
 		y := Nil
@@ -453,13 +453,13 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		}
 		return CallList(x, y), nil
 	case "first":
-		if len(args) > 0 && args[0].k == KindList && len(args[0].xs) > 0 {
-			return args[0].xs[0], nil
+		if len(args) > 0 && args[0].k == KindList && len(args[0].Items()) > 0 {
+			return args[0].Items()[0], nil
 		}
 		return Nil, nil
 	case "rest":
 		if len(args) > 0 && args[0].k == KindList {
-			return CallList(args[0].xs[1:]...), nil
+			return CallList(args[0].Items()[1:]...), nil
 		}
 		return Nil, nil
 	case "nth":
@@ -471,15 +471,15 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			f, _ := args[1].AsFloat64()
 			i = int(math.Floor(f))
 		}
-		if len(args) > 0 && args[0].k == KindList && i >= 0 && i < len(args[0].xs) {
-			return args[0].xs[i], nil
+		if len(args) > 0 && args[0].k == KindList && i >= 0 && i < len(args[0].Items()) {
+			return args[0].Items()[i], nil
 		}
 		return Nil, nil
 	case "append":
 		var out []Value
 		for _, a := range args {
 			if a.k == KindList {
-				out = append(out, a.xs...)
+				out = append(out, a.Items()...)
 			} else {
 				out = append(out, a)
 			}
@@ -544,9 +544,9 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			return Value{}, errMsg("pairs needs a map")
 		}
 		var out []Value
-		if args[0].mp != nil {
-			for i, k := range args[0].mp.keys {
-				out = append(out, List(String(k), args[0].mp.vals[i]))
+		if args[0].mapData() != nil {
+			for i, k := range args[0].mapData().keys {
+				out = append(out, List(String(k), args[0].mapData().vals[i]))
 			}
 		}
 		return List(out...), nil
@@ -555,21 +555,21 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			return Value{}, errMsg("from-pairs needs a list")
 		}
 		m := newMap()
-		for _, p := range args[0].xs {
+		for _, p := range args[0].Items() {
 			k, val, err := asPair(p, "from-pairs")
 			if err != nil {
 				return Value{}, err
 			}
 			m.put(k, val)
 		}
-		return Value{k: KindMap, mp: m}, nil
+		return Value{k: KindMap, p: m}, nil
 	case "keys":
 		if len(args) == 0 || args[0].k != KindMap {
 			return Value{}, errMsg("keys needs a map")
 		}
 		var out []Value
-		if args[0].mp != nil {
-			for _, k := range args[0].mp.keys {
+		if args[0].mapData() != nil {
+			for _, k := range args[0].mapData().keys {
 				out = append(out, String(k))
 			}
 		}
@@ -579,8 +579,8 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			return Value{}, errMsg("vals needs a map")
 		}
 		var out []Value
-		if args[0].mp != nil {
-			out = append(out, args[0].mp.vals...)
+		if args[0].mapData() != nil {
+			out = append(out, args[0].mapData().vals...)
 		}
 		return List(out...), nil
 	case "empty?":
@@ -589,8 +589,8 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			a = args[0]
 		}
 		return Bool(a.IsNil() ||
-			(a.k == KindList && len(a.xs) == 0) ||
-			(a.k == KindMap && a.mp.len() == 0) ||
+			(a.k == KindList && len(a.Items()) == 0) ||
+			(a.k == KindMap && a.mapData().len() == 0) ||
 			(a.k == KindString && a.s == "")), nil
 	case "list?":
 		return Bool(len(args) > 0 && args[0].k == KindList), nil
@@ -716,14 +716,14 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			if a.k != KindMap {
 				return Value{}, errMsg("merge needs maps")
 			}
-			if a.mp == nil {
+			if a.mapData() == nil {
 				continue
 			}
-			for i, k := range a.mp.keys {
-				m.put(k, a.mp.vals[i])
+			for i, k := range a.mapData().keys {
+				m.put(k, a.mapData().vals[i])
 			}
 		}
-		return Value{k: KindMap, mp: m}, nil
+		return Value{k: KindMap, p: m}, nil
 	default:
 		if c.rt != nil {
 			if b, ok := c.rt.extra[name]; ok {
@@ -761,15 +761,15 @@ func cmpNum(a, b Value) (int, error) {
 
 func asSeq(v Value, ctx string) ([]Value, error) {
 	if v.k == KindList {
-		return v.xs, nil
+		return v.Items(), nil
 	}
 	if v.k == KindMap {
-		if v.mp == nil {
+		if v.mapData() == nil {
 			return nil, nil
 		}
-		out := make([]Value, len(v.mp.keys))
-		for i, k := range v.mp.keys {
-			out[i] = List(String(k), v.mp.vals[i])
+		out := make([]Value, len(v.mapData().keys))
+		for i, k := range v.mapData().keys {
+			out[i] = List(String(k), v.mapData().vals[i])
 		}
 		return out, nil
 	}
@@ -777,13 +777,13 @@ func asSeq(v Value, ctx string) ([]Value, error) {
 }
 
 func asPair(v Value, ctx string) (string, Value, error) {
-	if v.k != KindList || len(v.xs) != 2 {
+	if v.k != KindList || len(v.Items()) != 2 {
 		return "", Value{}, errf("%s needs [\"key\" value] pairs", ctx)
 	}
-	if v.xs[0].k != KindString {
+	if v.Items()[0].k != KindString {
 		return "", Value{}, errf("%s needs string keys", ctx)
 	}
-	return v.xs[0].s, v.xs[1], nil
+	return v.Items()[0].s, v.Items()[1], nil
 }
 
 func mapGetPath(m Value, path []string, ctx string) (Value, error) {
@@ -795,7 +795,7 @@ func mapGetPath(m Value, path []string, ctx string) (Value, error) {
 		if cur.k != KindMap {
 			return Value{}, errf("%s needs a map", ctx)
 		}
-		v, ok := cur.mp.get(k)
+		v, ok := cur.mapData().get(k)
 		if !ok {
 			return Nil, nil
 		}
@@ -817,7 +817,7 @@ func mapSetPath(m Value, path []string, val Value, ctx string) (Value, error) {
 		if cur.IsNil() {
 			base = newMap()
 		} else if cur.k == KindMap {
-			base = cur.mp.clone()
+			base = cur.mapData().clone()
 		} else {
 			return Value{}, errf("%s: not a map", ctx)
 		}
@@ -832,7 +832,7 @@ func mapSetPath(m Value, path []string, val Value, ctx string) (Value, error) {
 		} else {
 			base.put(k, next)
 		}
-		return Value{k: KindMap, mp: base}, nil
+		return Value{k: KindMap, p: base}, nil
 	}
 	return goSet(m, 0)
 }

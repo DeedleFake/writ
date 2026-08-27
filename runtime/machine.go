@@ -430,7 +430,7 @@ func PackageValue(p Package) Value {
 	names := map[string]Value{}
 	for name, f := range p.Funcs {
 		fn := f
-		names[name] = Value{k: KindFn, fn: &fnVal{native: fn, name: name}}
+		names[name] = Value{k: KindFn, p: &fnVal{native: fn, name: name}}
 	}
 	for name, v := range p.Vals {
 		names[name] = v

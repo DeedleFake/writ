@@ -9,14 +9,14 @@ func collectImported(v Value, into map[*Value]struct{}, nodes *[]Value) {
 	*nodes = append(*nodes, v)
 	switch v.k {
 	case KindList:
-		for _, x := range v.xs {
+		for _, x := range v.Items() {
 			collectImported(x, into, nodes)
 		}
 	case KindMap:
-		if v.mp == nil {
+		if v.mapData() == nil {
 			return
 		}
-		for _, x := range v.mp.vals {
+		for _, x := range v.mapData().vals {
 			collectImported(x, into, nodes)
 		}
 	case KindQuote, KindUnquote, KindSplice:
@@ -30,25 +30,25 @@ func valuePtrEq(a, b Value) bool {
 	}
 	switch a.k {
 	case KindList:
-		if len(a.xs) != len(b.xs) {
+		if len(a.Items()) != len(b.Items()) {
 			return false
 		}
-		if len(a.xs) > 0 && len(b.xs) > 0 && &a.xs[0] == &b.xs[0] && a.vec == b.vec {
+		if len(a.Items()) > 0 && len(b.Items()) > 0 && &a.Items()[0] == &b.Items()[0] && a.IsVec() == b.IsVec() {
 			return true
 		}
 		return false
 	case KindMap:
-		return a.mp != nil && a.mp == b.mp
+		return a.mapData() != nil && a.mapData() == b.mapData()
 	case KindQuote, KindUnquote, KindSplice:
-		return a.inner != nil && a.inner == b.inner
+		return a.innerPtr() != nil && a.innerPtr() == b.innerPtr()
 	case KindSymbol:
-		return a.sym == b.sym && a.hasSpan == b.hasSpan && a.span == b.span
+		return a.h == b.h && a.HasSpan() == b.HasSpan() && a.srcSpan() == b.srcSpan()
 	case KindString, KindComment:
-		return a.s == b.s && a.hasSpan == b.hasSpan && a.span == b.span
+		return a.s == b.s && a.HasSpan() == b.HasSpan() && a.srcSpan() == b.srcSpan()
 	case KindInt:
-		return a.Equal(b) && a.hasSpan == b.hasSpan && a.span == b.span
+		return a.Equal(b) && a.HasSpan() == b.HasSpan() && a.srcSpan() == b.srcSpan()
 	case KindFloat:
-		return a.f == b.f && a.hasSpan == b.hasSpan && a.span == b.span
+		return a.floatVal() == b.floatVal() && a.HasSpan() == b.HasSpan() && a.srcSpan() == b.srcSpan()
 	default:
 		return false
 	}
@@ -105,47 +105,47 @@ func hygienic(v Value, imported []Value, subst map[string]string, h *hygState) V
 	case KindQuote, KindUnquote, KindSplice:
 		return v.setInner(hygienic(v.innerVal(), imported, subst, h))
 	case KindMap:
-		if v.mp == nil {
+		if v.mapData() == nil {
 			return v
 		}
 		m := newMap()
-		for i, k := range v.mp.keys {
-			m.put(k, hygienic(v.mp.vals[i], imported, subst, h))
+		for i, k := range v.mapData().keys {
+			m.put(k, hygienic(v.mapData().vals[i], imported, subst, h))
 		}
 		out := v
-		out.mp = m
+		out = out.withMap(m)
 		return out
 	case KindList:
 		name := ""
-		if len(v.xs) > 0 && v.xs[0].k == KindSymbol {
-			name = v.xs[0].Name()
+		if len(v.Items()) > 0 && v.Items()[0].k == KindSymbol {
+			name = v.Items()[0].Name()
 		}
-		if (name == "let" || name == "let!") && len(v.xs) >= 1 {
+		if (name == "let" || name == "let!") && len(v.Items()) >= 1 {
 			exported := name == "let!"
 			var binds Value
-			if len(v.xs) > 1 {
-				binds = v.xs[1]
+			if len(v.Items()) > 1 {
+				binds = v.Items()[1]
 			}
 			next := subst
 			newBinds := binds
-			hasBinds := len(v.xs) > 1
+			hasBinds := len(v.Items()) > 1
 			if hasBinds && !importedHas(imported, binds) && binds.k == KindMap && !exported {
 				next = copySubst(subst)
 				m := newMap()
-				if binds.mp != nil {
-					for i, k := range binds.mp.keys {
+				if binds.mapData() != nil {
+					for i, k := range binds.mapData().keys {
 						nk := h.fresh(k)
 						next[k] = nk
-						m.put(nk, hygienic(binds.mp.vals[i], imported, subst, h))
+						m.put(nk, hygienic(binds.mapData().vals[i], imported, subst, h))
 					}
 				}
 				newBinds = binds
-				newBinds.mp = m
+				newBinds = newBinds.withMap(m)
 			} else if hasBinds {
 				newBinds = hygienic(binds, imported, subst, h)
 			}
-			body := make([]Value, 0, len(v.xs))
-			head := v.xs[0]
+			body := make([]Value, 0, len(v.Items()))
+			head := v.Items()[0]
 			if head.k == KindSymbol {
 				head = head.withSymName("let")
 			} else {
@@ -155,22 +155,22 @@ func hygienic(v Value, imported []Value, subst map[string]string, h *hygState) V
 			if hasBinds {
 				body = append(body, newBinds)
 			}
-			for _, x := range v.xs[2:] {
+			for _, x := range v.Items()[2:] {
 				body = append(body, hygienic(x, imported, next, h))
 			}
 			out := v
-			out.xs = body
+			out = out.withItems(body)
 			return out
 		}
 		if name == "fn" || name == "def" || name == "defm" || name == "on" {
 			return hygienicFnLike(v, imported, subst, name, h)
 		}
-		xs := make([]Value, len(v.xs))
-		for i, x := range v.xs {
+		xs := make([]Value, len(v.Items()))
+		for i, x := range v.Items() {
 			xs[i] = hygienic(x, imported, subst, h)
 		}
 		out := v
-		out.xs = xs
+		out = out.withItems(xs)
 		return out
 	default:
 		return v
@@ -190,8 +190,8 @@ func renameParamForm(form Value, imported []Value, subst map[string]string, h *h
 		return hygienic(form, imported, subst, h), subst
 	}
 	next := copySubst(subst)
-	out := make([]Value, 0, len(form.xs))
-	for _, p := range form.xs {
+	out := make([]Value, 0, len(form.Items()))
+	for _, p := range form.Items() {
 		if p.k == KindSplice && p.innerVal().k == KindSymbol {
 			old := p.innerVal().Name()
 			nk := h.fresh(old)
@@ -218,12 +218,12 @@ func renameParamForm(form Value, imported []Value, subst map[string]string, h *h
 		}
 		out = append(out, hygienic(p, imported, subst, h))
 	}
-	form.xs = out
+	form = form.withItems(out)
 	return form, next
 }
 
 func hygienicFnLike(v Value, imported []Value, subst map[string]string, name string, h *hygState) Value {
-	xs := v.xs
+	xs := v.Items()
 	if name == "fn" {
 		parsed, err := parseFn(xs[1:])
 		if err != nil {
@@ -231,7 +231,7 @@ func hygienicFnLike(v Value, imported []Value, subst map[string]string, name str
 			for i, x := range xs {
 				out[i] = hygienic(x, imported, subst, h)
 			}
-			v.xs = out
+			v = v.withItems(out)
 			return v
 		}
 		rebuilt := []Value{xs[0]}
@@ -252,7 +252,7 @@ func hygienicFnLike(v Value, imported []Value, subst map[string]string, name str
 		if n := len(rebuilt); n > 0 && isSymName(rebuilt[n-1], "fn") {
 			rebuilt = rebuilt[:n-1]
 		}
-		v.xs = rebuilt
+		v = v.withItems(rebuilt)
 		return v
 	}
 	var nm Value
@@ -264,30 +264,30 @@ func hygienicFnLike(v Value, imported []Value, subst map[string]string, name str
 		head = hygienic(xs[0], imported, subst, h)
 	}
 	if name == "def" || name == "defm" {
-		if nm.k != KindList || len(nm.xs) == 0 {
+		if nm.k != KindList || len(nm.Items()) == 0 {
 			out := make([]Value, len(xs))
 			for i, x := range xs {
 				out[i] = hygienic(x, imported, subst, h)
 			}
-			v.xs = out
+			v = v.withItems(out)
 			return v
 		}
-		nameForm := nm.xs[0]
-		paramsOnly := CallList(nm.xs[1:]...)
-		paramsOnly.xs = nm.xs[1:]
-		if nm.hasSpan {
-			paramsOnly = paramsOnly.withSpan(nm.span.Start, nm.span.End)
+		nameForm := nm.Items()[0]
+		paramsOnly := CallList(nm.Items()[1:]...)
+		paramsOnly = paramsOnly.withItems(nm.Items()[1:])
+		if nm.HasSpan() {
+			paramsOnly = paramsOnly.withSpan(nm.srcSpan().Start, nm.srcSpan().End)
 		}
 		form, next := renameParamForm(paramsOnly, imported, subst, h)
-		renamed := form.xs
+		renamed := form.Items()
 		newHead := nm
-		newHead.xs = append([]Value{nameForm}, renamed...)
+		newHead = newHead.withItems(append([]Value{nameForm}, renamed...))
 		body := make([]Value, 0, len(xs)-1)
 		body = append(body, head, newHead)
 		for _, b := range xs[2:] {
 			body = append(body, hygienic(b, imported, next, h))
 		}
-		v.xs = body
+		v = v.withItems(body)
 		return v
 	}
 	var params Value
@@ -301,7 +301,7 @@ func hygienicFnLike(v Value, imported []Value, subst map[string]string, name str
 		for i, x := range xs {
 			out[i] = hygienic(x, imported, subst, h)
 		}
-		v.xs = out
+		v = v.withItems(out)
 		return v
 	}
 	form, next := renameParamForm(params, imported, subst, h)
@@ -309,7 +309,7 @@ func hygienicFnLike(v Value, imported []Value, subst map[string]string, name str
 	for _, b := range xs[3:] {
 		body = append(body, hygienic(b, imported, next, h))
 	}
-	v.xs = body
+	v = v.withItems(body)
 	return v
 }
 
@@ -317,8 +317,8 @@ func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) 
 	parsed, err := parseCallRaw(raw)
 	if err != nil {
 		e := asError(err)
-		if e.Start == 0 && e.End == 0 && call.hasSpan {
-			e.Start, e.End = call.span.Start, call.span.End
+		if e.Start == 0 && e.End == 0 && call.HasSpan() {
+			e.Start, e.End = call.srcSpan().Start, call.srcSpan().End
 		}
 		return nil, e
 	}
@@ -357,8 +357,8 @@ func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) 
 		out := make([]Value, len(frags))
 		for i, f := range frags {
 			out[i] = hygienic(f, imported, map[string]string{}, h)
-			if !out[i].hasSpan && call.hasSpan {
-				out[i] = out[i].withSpan(call.span.Start, call.span.End)
+			if !out[i].HasSpan() && call.HasSpan() {
+				out[i] = out[i].withSpan(call.srcSpan().Start, call.srcSpan().End)
 			}
 		}
 		return out, nil
@@ -367,10 +367,10 @@ func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) 
 }
 
 func asMacroCall(v Value, c *ctx) (name string, clauses []Clause, args []Value, ok bool) {
-	if v.k != KindList || v.vec {
+	if v.k != KindList || v.IsVec() {
 		return "", nil, nil, false
 	}
-	xs := filterComments(v.xs)
+	xs := filterComments(v.Items())
 	if len(xs) == 0 || xs[0].k != KindSymbol {
 		return "", nil, nil, false
 	}
@@ -386,8 +386,8 @@ func packExpr(forms []Value, call Value) Value {
 	switch len(forms) {
 	case 0:
 		out := Nil
-		if call.hasSpan {
-			out = out.withSpan(call.span.Start, call.span.End)
+		if call.HasSpan() {
+			out = out.withSpan(call.srcSpan().Start, call.srcSpan().End)
 		}
 		return out
 	case 1:
@@ -397,8 +397,8 @@ func packExpr(forms []Value, call Value) Value {
 		xs = append(xs, Symbol("let"), EmptyMap())
 		xs = append(xs, forms...)
 		out := CallList(xs...)
-		if call.hasSpan {
-			out = out.withSpan(call.span.Start, call.span.End)
+		if call.HasSpan() {
+			out = out.withSpan(call.srcSpan().Start, call.srcSpan().End)
 		}
 		return out
 	}
@@ -453,28 +453,28 @@ func expandIn(v Value, env *env, c *ctx) ([]Value, error) {
 
 func expandTree(v Value, env *env, c *ctx) (Value, error) {
 	switch v.k {
-	case KindComment, KindInt, KindFloat, KindString, KindFn, KindQuote, KindUnquote, KindSplice, KindSymbol:
+	case KindComment, KindInt, KindFloat, KindString, KindFn, KindNative, KindQuote, KindUnquote, KindSplice, KindSymbol:
 		return v, nil
 	case KindMap:
-		if v.mp == nil {
+		if v.mapData() == nil {
 			return v, nil
 		}
 		m := newMap()
-		for i, k := range v.mp.keys {
-			val, err := expandVal(v.mp.vals[i], env, c)
+		for i, k := range v.mapData().keys {
+			val, err := expandVal(v.mapData().vals[i], env, c)
 			if err != nil {
 				return Value{}, err
 			}
 			m.put(k, val)
 		}
 		out := v
-		out.mp = m
+		out = out.withMap(m)
 		return out, nil
 	case KindList:
-		if v.vec {
+		if v.IsVec() {
 			return expandElems(v, env, c)
 		}
-		xs := filterComments(v.xs)
+		xs := filterComments(v.Items())
 		if len(xs) == 0 {
 			return v, nil
 		}
@@ -497,8 +497,8 @@ func expandTree(v Value, env *env, c *ctx) (Value, error) {
 }
 
 func expandElems(v Value, env *env, c *ctx) (Value, error) {
-	xs := make([]Value, len(v.xs))
-	for i, x := range v.xs {
+	xs := make([]Value, len(v.Items()))
+	for i, x := range v.Items() {
 		var err error
 		xs[i], err = expandVal(x, env, c)
 		if err != nil {
@@ -506,33 +506,33 @@ func expandElems(v Value, env *env, c *ctx) (Value, error) {
 		}
 	}
 	out := v
-	out.xs = xs
+	out = out.withItems(xs)
 	return out, nil
 }
 
 func expandLet(v Value, env *env, c *ctx) (Value, error) {
-	if len(v.xs) < 2 {
+	if len(v.Items()) < 2 {
 		return expandElems(v, env, c)
 	}
-	binds, err := expandVal(v.xs[1], env, c)
+	binds, err := expandVal(v.Items()[1], env, c)
 	if err != nil {
 		return Value{}, err
 	}
-	body, err := expandForms(v.xs[2:], env, c)
+	body, err := expandForms(v.Items()[2:], env, c)
 	if err != nil {
 		return Value{}, err
 	}
 	out := v
-	out.xs = append([]Value{v.xs[0], binds}, body...)
+	out = out.withItems(append([]Value{v.Items()[0], binds}, body...))
 	return out, nil
 }
 
 func expandFn(v Value, env *env, c *ctx) (Value, error) {
-	parsed, err := parseFn(v.xs[1:])
+	parsed, err := parseFn(v.Items()[1:])
 	if err != nil || parsed.kind != "long" {
 		return expandElems(v, env, c)
 	}
-	rebuilt := []Value{v.xs[0]}
+	rebuilt := []Value{v.Items()[0]}
 	for i, cl := range parsed.clauses {
 		if cl.ParamsForm != nil {
 			rebuilt = append(rebuilt, *cl.ParamsForm)
@@ -547,12 +547,12 @@ func expandFn(v Value, env *env, c *ctx) (Value, error) {
 		}
 	}
 	out := v
-	out.xs = rebuilt
+	out = out.withItems(rebuilt)
 	return out, nil
 }
 
 func expandIf(v Value, env *env, c *ctx) (Value, error) {
-	clauses, err := parseIfArgs(v.xs[1:])
+	clauses, err := parseIfArgs(v.Items()[1:])
 	if err != nil {
 		return expandElems(v, env, c)
 	}
@@ -570,7 +570,7 @@ func expandIf(v Value, env *env, c *ctx) (Value, error) {
 		}
 		clauses[i].Body = body
 	}
-	xs := []Value{v.xs[0]}
+	xs := []Value{v.Items()[0]}
 	for i, cl := range clauses {
 		if i > 0 {
 			xs = append(xs, Symbol("else"))
@@ -587,23 +587,23 @@ func expandIf(v Value, env *env, c *ctx) (Value, error) {
 		xs = append(xs, cl.Body...)
 	}
 	out := v
-	out.xs = xs
+	out = out.withItems(xs)
 	return out, nil
 }
 
 func expandAfter(v Value, env *env, c *ctx) (Value, error) {
-	if len(v.xs) < 2 {
+	if len(v.Items()) < 2 {
 		return expandElems(v, env, c)
 	}
-	dur, err := expandVal(v.xs[1], env, c)
+	dur, err := expandVal(v.Items()[1], env, c)
 	if err != nil {
 		return Value{}, err
 	}
-	body, err := expandForms(v.xs[2:], env, c)
+	body, err := expandForms(v.Items()[2:], env, c)
 	if err != nil {
 		return Value{}, err
 	}
 	out := v
-	out.xs = append([]Value{v.xs[0], dur}, body...)
+	out = out.withItems(append([]Value{v.Items()[0], dur}, body...))
 	return out, nil
 }

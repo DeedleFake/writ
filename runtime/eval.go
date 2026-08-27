@@ -125,7 +125,7 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 	switch v.k {
 	case KindComment:
 		return Nil, nil
-	case KindInt, KindFloat, KindString, KindFn:
+	case KindInt, KindFloat, KindString, KindFn, KindNative:
 		return v, nil
 	case KindQuote:
 		return evalQuote(v.innerVal(), env, c, 1)
@@ -140,28 +140,28 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 		return lookup(env, v.Name())
 	case KindMap:
 		m := newMap()
-		if v.mp != nil {
-			for i, k := range v.mp.keys {
-				val, err := evalVal(v.mp.vals[i], env, c)
+		if v.mapData() != nil {
+			for i, k := range v.mapData().keys {
+				val, err := evalVal(v.mapData().vals[i], env, c)
 				if err != nil {
 					return Value{}, err
 				}
 				m.put(k, val)
 			}
 		}
-		return Value{k: KindMap, mp: m}, nil
+		return Value{k: KindMap, p: m}, nil
 	case KindList:
-		if len(v.xs) == 0 {
+		if len(v.Items()) == 0 {
 			return v, nil
 		}
-		if v.vec {
-			xs, err := evalSpread(v.xs, env, c, false)
+		if v.IsVec() {
+			xs, err := evalSpread(v.Items(), env, c, false)
 			if err != nil {
 				return Value{}, err
 			}
 			return List(xs...), nil
 		}
-		xs := filterComments(v.xs)
+		xs := filterComments(v.Items())
 		if len(xs) == 0 {
 			return Nil, nil
 		}
@@ -235,7 +235,7 @@ func asSpliceList(v Value, at Value) ([]Value, error) {
 	if v.k != KindList {
 		return nil, errVal(at, "@ needs a list")
 	}
-	return filterComments(v.xs), nil
+	return filterComments(v.Items()), nil
 }
 
 func evalSpread(items []Value, env *env, c *ctx, inQuote bool) ([]Value, error) {
@@ -301,7 +301,7 @@ func evalQuote(v Value, env *env, c *ctx, depth int) (Value, error) {
 		return List(xs...), nil
 	case KindList:
 		var out []Value
-		for _, item := range v.xs {
+		for _, item := range v.Items() {
 			if item.k == KindComment {
 				out = append(out, item)
 				continue
@@ -324,22 +324,22 @@ func evalQuote(v Value, env *env, c *ctx, depth int) (Value, error) {
 			}
 			out = append(out, q)
 		}
-		if v.vec {
+		if v.IsVec() {
 			return List(out...), nil
 		}
 		return CallList(out...), nil
 	case KindMap:
 		m := newMap()
-		if v.mp != nil {
-			for i, k := range v.mp.keys {
-				val, err := evalQuote(v.mp.vals[i], env, c, depth)
+		if v.mapData() != nil {
+			for i, k := range v.mapData().keys {
+				val, err := evalQuote(v.mapData().vals[i], env, c, depth)
 				if err != nil {
 					return Value{}, err
 				}
 				m.put(k, val)
 			}
 		}
-		return Value{k: KindMap, mp: m}, nil
+		return Value{k: KindMap, p: m}, nil
 	case KindSymbol:
 		return Symbol(v.Name()), nil
 	default:
@@ -524,9 +524,9 @@ func evalLet(args []Value, env *env, c *ctx) (Value, error) {
 		return Value{}, errMsg("let needs a map")
 	}
 	child := makeEnv(env)
-	if m.mp != nil {
-		for i, k := range m.mp.keys {
-			child.set(k, m.mp.vals[i])
+	if m.mapData() != nil {
+		for i, k := range m.mapData().keys {
+			child.set(k, m.mapData().vals[i])
 		}
 	}
 	last := Nil
@@ -546,10 +546,10 @@ func pipeStepForm(step, cur Value) (Value, error) {
 	if step.k == KindSymbol {
 		return CallList(step, q), nil
 	}
-	if step.k != KindList || step.vec {
+	if step.k != KindList || step.IsVec() {
 		return Value{}, errMsg("pipe step must be a call or a name")
 	}
-	xs := filterComments(step.xs)
+	xs := filterComments(step.Items())
 	if len(xs) == 0 {
 		return Value{}, errMsg("pipe step must be a call or a name")
 	}
@@ -587,8 +587,8 @@ func evalPipe(args []Value, env *env, c *ctx) (Value, error) {
 }
 
 func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
-	if fn.k == KindFn && fn.fn != nil {
-		f := fn.fn
+	if fn.k == KindFn && fn.fnData() != nil {
+		f := fn.fnData()
 		if f.native != nil {
 			if len(call.keys) > 0 {
 				return Value{}, errMsg("this function does not take keyword arguments")

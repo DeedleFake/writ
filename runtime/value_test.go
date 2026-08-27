@@ -1,29 +1,33 @@
 package runtime
 
-import "testing"
+import (
+	"strings"
+	"testing"
+	"unsafe"
+)
 
 func TestSymbolIntern(t *testing.T) {
 	a := Symbol("hits")
 	b := Symbol("hits")
-	if a.sym != b.sym {
+	if a.h != b.h {
 		t.Fatal("Symbol does not intern")
 	}
 	if !a.Equal(b) {
 		t.Fatal("interned symbols should compare equal")
 	}
-	if a.sym != internSym("hits").sym {
+	if a.h != internSym("hits").h {
 		t.Fatal("internSym and Symbol disagree")
 	}
 }
 
 func TestTrueFalseNilHandles(t *testing.T) {
-	if !Symbol("true").IsTrue() || Symbol("true").sym != True.sym {
+	if !Symbol("true").IsTrue() || Symbol("true").h != True.h {
 		t.Fatal("true")
 	}
-	if !Symbol("false").IsFalse() || Symbol("false").sym != False.sym {
+	if !Symbol("false").IsFalse() || Symbol("false").h != False.h {
 		t.Fatal("false")
 	}
-	if !Symbol("nil").IsNil() || Symbol("nil").sym != Nil.sym {
+	if !Symbol("nil").IsNil() || Symbol("nil").h != Nil.h {
 		t.Fatal("nil")
 	}
 	if True.Equal(False) || True.Equal(Nil) {
@@ -39,7 +43,113 @@ func TestWithSpanDoesNotChangeIdentity(t *testing.T) {
 	if !okA || !okB || sa == sb {
 		t.Fatalf("spans %+v %+v", sa, sb)
 	}
-	if a.sym != b.sym || !a.Equal(b) {
+	if a.h != b.h || !a.Equal(b) {
 		t.Fatal("span must not affect interned identity")
+	}
+}
+
+func TestValueSize(t *testing.T) {
+	n := unsafe.Sizeof(Value{})
+	if n > 64 {
+		t.Fatalf("sizeof(Value) = %d, want <= 64 (was 168)", n)
+	}
+}
+
+func TestSmallIntUnboxed(t *testing.T) {
+	v := Int64(42)
+	if v.p != nil || v.src != nil {
+		t.Fatalf("small int boxed: p=%#v src=%#v", v.p, v.src)
+	}
+	if v.n != 42 || v.k != KindInt {
+		t.Fatalf("small int: k=%v n=%d", v.k, v.n)
+	}
+}
+
+type nativeEqBox struct{ n int }
+
+func TestNativeEqualPrintAs(t *testing.T) {
+	a := Native(&nativeEqBox{n: 1})
+	b := Native(&nativeEqBox{n: 1})
+	p, ok := a.Native()
+	if !ok {
+		t.Fatal("Native()")
+	}
+	if p.(*nativeEqBox) == b.p.(*nativeEqBox) {
+		t.Fatal("distinct pointers")
+	}
+	if a.Equal(b) {
+		t.Fatal("distinct pointers should not compare equal")
+	}
+	same := &nativeEqBox{n: 2}
+	if !Native(same).Equal(Native(same)) {
+		t.Fatal("same pointer should compare equal")
+	}
+	if !Native(3).Equal(Native(3)) {
+		t.Fatal("comparable natives")
+	}
+	if Native(3).Equal(Int64(3)) {
+		t.Fatal("native vs writ")
+	}
+	fn := Value{k: KindFn, p: &fnVal{}}
+	if fn.Equal(fn) {
+		t.Fatal("functions never equal")
+	}
+	if Native(func() {}).Equal(Native(func() {})) {
+		t.Fatal("incomparable natives")
+	}
+	type ifaceBox struct{ V any }
+	panicEq := Native(ifaceBox{[]int{1}})
+	if panicEq.Equal(Native(ifaceBox{[]int{1}})) {
+		t.Fatal("incomparable interface payload")
+	}
+	if panicEq.Equal(panicEq) {
+		t.Fatal("incomparable native should not equal itself")
+	}
+	if !Native(ifaceBox{1}).Equal(Native(ifaceBox{1})) {
+		t.Fatal("comparable interface payload")
+	}
+	s := Print(a)
+	if !strings.Contains(s, "#<native") {
+		t.Fatalf("print: %q", s)
+	}
+	var got *nativeEqBox
+	if !a.As(&got) || got != p.(*nativeEqBox) {
+		t.Fatal("As identity")
+	}
+	var wrong int
+	if a.As(&wrong) {
+		t.Fatal("As wrong type")
+	}
+	if a.As(nil) {
+		t.Fatal("As nil dst")
+	}
+	if a.As(0) {
+		t.Fatal("As non-pointer dst")
+	}
+	if _, ok := Int64(1).Native(); ok {
+		t.Fatal("Native() on non-native")
+	}
+	if Int64(1).As(&got) {
+		t.Fatal("As on non-native")
+	}
+
+	boxed := Native(&nativeEqBox{n: 3})
+	if boxed.Inner() != Nil {
+		t.Fatal("Inner on native")
+	}
+	out := boxed.SetInner(Int64(1))
+	if !out.Equal(boxed) || out.Kind() != KindNative {
+		t.Fatal("SetInner on native")
+	}
+	var h *nativeEqBox
+	if !out.As(&h) || h.n != 3 {
+		t.Fatal("SetInner must not drop native payload")
+	}
+	q := Quote(Int64(1))
+	if !q.Inner().Equal(Int64(1)) {
+		t.Fatal("Inner on quote")
+	}
+	if !q.SetInner(Int64(2)).Inner().Equal(Int64(2)) {
+		t.Fatal("SetInner on quote")
 	}
 }

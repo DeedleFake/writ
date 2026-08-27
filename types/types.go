@@ -2,7 +2,9 @@ package types
 
 import (
 	"encoding/json"
+	"reflect"
 	"strings"
+	"sync"
 
 	"deedles.dev/writ/runtime"
 )
@@ -28,6 +30,7 @@ const (
 	tyFn
 	tyOr
 	tyDyn
+	tyNative
 )
 
 // Type is a static type. Use the constructors such as [IntType] and [Union].
@@ -41,6 +44,7 @@ type Type struct {
 	fields []mapField
 	rest   *Type
 	arrows []Arrow
+	rt     reflect.Type
 }
 
 type mapField struct {
@@ -133,6 +137,26 @@ func MapType(keys []ArrowKey, rest *Type) Type {
 
 func FnType(arrows ...Arrow) Type {
 	return Type{k: tyFn, arrows: arrows}
+}
+
+var nativeIntern sync.Map // reflect.Type -> Type
+
+func nativeOf(rt reflect.Type) Type {
+	if rt == nil {
+		return Type{k: tyNative}
+	}
+	if v, ok := nativeIntern.Load(rt); ok {
+		return v.(Type)
+	}
+	t := Type{k: tyNative, rt: rt}
+	actual, _ := nativeIntern.LoadOrStore(rt, t)
+	return actual.(Type)
+}
+
+// Native is a nominal host type, interned by [reflect.Type]. Different
+// type parameters do not unify.
+func Native[T any]() Type {
+	return nativeOf(reflect.TypeFor[T]())
 }
 
 func Union(ts ...Type) Type { return tOr(ts) }
@@ -286,6 +310,8 @@ func sameType(a, b Type) bool {
 		return true
 	case tyDyn:
 		return sameType(*a.inner, *b.inner)
+	case tyNative:
+		return a.rt == b.rt
 	default:
 		return false
 	}
@@ -442,6 +468,11 @@ func printType(t Type, aliases []Alias) string {
 		return strings.Join(parts, " or ")
 	case tyDyn:
 		return "dynamic(" + printType(*t.inner, aliases) + ")"
+	case tyNative:
+		if t.rt == nil {
+			return "native()"
+		}
+		return "native(" + t.rt.String() + ")"
 	default:
 		return "any()"
 	}
@@ -731,6 +762,9 @@ func intersect(a, b Type) Type {
 		arrows := append(append([]Arrow{}, a.arrows...), b.arrows...)
 		return Type{k: tyFn, arrows: arrows}
 	}
+	if a.k == tyNative && b.k == tyNative && a.rt == b.rt {
+		return a
+	}
 	return None()
 }
 
@@ -1018,6 +1052,15 @@ func kindOf(v runtime.Value) Type {
 		return tMap(fields, nil)
 	case runtime.KindFn:
 		return FnType()
+	case runtime.KindNative:
+		nv, ok := v.Native()
+		if !ok {
+			return Any()
+		}
+		if nv == nil {
+			return nativeOf(nil)
+		}
+		return nativeOf(reflect.TypeOf(nv))
 	case runtime.KindComment:
 		return NilType()
 	case runtime.KindQuote:

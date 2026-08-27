@@ -3,6 +3,7 @@ package runtime
 import (
 	"math"
 	"math/big"
+	"reflect"
 	"strconv"
 	"strings"
 	"unique"
@@ -26,6 +27,7 @@ const (
 	KindUnquote
 	KindSplice
 	KindComment
+	KindNative
 )
 
 func (k Kind) String() string {
@@ -52,6 +54,8 @@ func (k Kind) String() string {
 		return "splice"
 	case KindComment:
 		return "comment"
+	case KindNative:
+		return "native"
 	default:
 		return "invalid"
 	}
@@ -71,23 +75,26 @@ type MapPair struct {
 
 // Value is a Writ value or source form.
 type Value struct {
-	k        Kind
-	i        int64
-	big      *big.Int
-	f        float64
-	s        string
-	sym      unique.Handle[string]
-	xs       []Value
-	vec      bool
-	mp       *mapData
-	fn       *fnVal
-	inner    *Value
+	k   Kind
+	n   int64 // small int, or float64 bits
+	s   string
+	h   unique.Handle[string]
+	p   any      // list, map, fn, quote-inner, *big.Int, native
+	src *srcInfo // nil for synthetic values
+}
+
+type srcInfo struct {
 	span     Span
 	hasSpan  bool
 	cmt      string
 	blank    bool
 	broke    bool
 	keySpans map[string]Span
+}
+
+type listData struct {
+	xs  []Value
+	vec bool
 }
 
 type mapData struct {
@@ -113,22 +120,100 @@ var (
 )
 
 func internSym(name string) Value {
-	return Value{k: KindSymbol, sym: unique.Make(name)}
+	return Value{k: KindSymbol, h: unique.Make(name)}
 }
 
 func (v Value) withSymName(name string) Value {
 	n := internSym(name)
-	n.span = v.span
-	n.hasSpan = v.hasSpan
-	n.cmt = v.cmt
-	n.blank = v.blank
-	n.broke = v.broke
+	if v.src != nil {
+		n.src = &srcInfo{
+			span:    v.src.span,
+			hasSpan: v.src.hasSpan,
+			cmt:     v.src.cmt,
+			blank:   v.src.blank,
+			broke:   v.src.broke,
+		}
+	}
 	return n
+}
+
+func (v Value) cloneSrc() *srcInfo {
+	if v.src == nil {
+		return &srcInfo{}
+	}
+	cp := *v.src
+	return &cp
+}
+
+func (v Value) list() *listData {
+	ld, _ := v.p.(*listData)
+	return ld
+}
+
+func (v Value) mapData() *mapData {
+	m, _ := v.p.(*mapData)
+	return m
+}
+
+func (v Value) fnData() *fnVal {
+	f, _ := v.p.(*fnVal)
+	return f
+}
+
+func (v Value) isWrap() bool {
+	switch v.k {
+	case KindQuote, KindUnquote, KindSplice:
+		return true
+	default:
+		return false
+	}
+}
+
+func (v Value) innerPtr() *Value {
+	if !v.isWrap() {
+		return nil
+	}
+	in, _ := v.p.(*Value)
+	return in
+}
+
+func (v Value) bigInt() *big.Int {
+	b, _ := v.p.(*big.Int)
+	return b
+}
+
+func (v Value) floatVal() float64 {
+	return math.Float64frombits(uint64(v.n))
+}
+
+func (v Value) srcSpan() Span {
+	if v.src == nil {
+		return Span{}
+	}
+	return v.src.span
+}
+
+func (v Value) withItems(xs []Value) Value {
+	vec := false
+	if ld := v.list(); ld != nil {
+		vec = ld.vec
+	}
+	v.p = &listData{xs: xs, vec: vec}
+	return v
+}
+
+func (v Value) withMap(m *mapData) Value {
+	v.p = m
+	return v
+}
+
+func listVal(xs []Value, vec bool) Value {
+	return Value{k: KindList, p: &listData{xs: xs, vec: vec}}
 }
 
 // Int64 returns an integer value.
 func Int64(n int64) Value {
-	return Value{k: KindInt, i: n}
+	return Value{k: KindInt, n: n}
 }
 
 // Int returns an integer value. v is copied.
@@ -139,7 +224,7 @@ func Int(v *big.Int) Value {
 	if v.IsInt64() {
 		return Int64(v.Int64())
 	}
-	return Value{k: KindInt, big: new(big.Int).Set(v)}
+	return Value{k: KindInt, p: new(big.Int).Set(v)}
 }
 
 // MustInt parses a decimal integer. It panics on error.
@@ -153,7 +238,7 @@ func MustInt(s string) Value {
 
 // Float returns a float64 value.
 func Float(f float64) Value {
-	return Value{k: KindFloat, f: f}
+	return Value{k: KindFloat, n: int64(math.Float64bits(f))}
 }
 
 // String returns a string value.
@@ -184,30 +269,35 @@ func Bool(b bool) Value {
 
 // List returns a data list (vector).
 func List(xs ...Value) Value {
-	return Value{k: KindList, xs: xs, vec: true}
+	return listVal(xs, true)
 }
 
 // CallList returns a call-shaped list (parentheses).
 func CallList(xs ...Value) Value {
-	return Value{k: KindList, xs: xs, vec: false}
+	return listVal(xs, false)
 }
 
 // Quote wraps v.
 func Quote(v Value) Value {
 	inner := v
-	return Value{k: KindQuote, inner: &inner}
+	return Value{k: KindQuote, p: &inner}
 }
 
 // Unquote wraps v.
 func Unquote(v Value) Value {
 	inner := v
-	return Value{k: KindUnquote, inner: &inner}
+	return Value{k: KindUnquote, p: &inner}
 }
 
 // Splice wraps v.
 func Splice(v Value) Value {
 	inner := v
-	return Value{k: KindSplice, inner: &inner}
+	return Value{k: KindSplice, p: &inner}
+}
+
+// Native boxes a host object. Native values are opaque to Writ.
+func Native(v any) Value {
+	return Value{k: KindNative, p: v}
 }
 
 // MapFrom builds a map from pairs. Later keys win.
@@ -216,12 +306,12 @@ func MapFrom(pairs ...MapPair) Value {
 	for _, p := range pairs {
 		m.put(p.Key, p.Value)
 	}
-	return Value{k: KindMap, mp: m}
+	return Value{k: KindMap, p: m}
 }
 
 // EmptyMap is `[:]`.
 func EmptyMap() Value {
-	return Value{k: KindMap, mp: newMap()}
+	return Value{k: KindMap, p: newMap()}
 }
 
 func newMap() *mapData {
@@ -296,26 +386,34 @@ func (m *mapData) pairs() []MapPair {
 }
 
 func (v Value) withSpan(start, end int) Value {
-	v.span = Span{Start: start, End: end}
-	v.hasSpan = true
+	s := v.cloneSrc()
+	s.span = Span{Start: start, End: end}
+	s.hasSpan = true
+	v.src = s
 	return v
 }
 
 func (v Value) withCmt(cmt string) Value {
-	v.cmt = cmt
+	s := v.cloneSrc()
+	s.cmt = cmt
+	v.src = s
 	return v
 }
 
 func (v Value) innerVal() Value {
-	if v.inner == nil {
+	in := v.innerPtr()
+	if in == nil {
 		return Nil
 	}
-	return *v.inner
+	return *in
 }
 
 func (v Value) setInner(in Value) Value {
+	if !v.isWrap() {
+		return v
+	}
 	cp := in
-	v.inner = &cp
+	v.p = &cp
 	return v
 }
 
@@ -323,21 +421,21 @@ func (v Value) Kind() Kind { return v.k }
 
 // Span returns the source span, if any.
 func (v Value) Span() (Span, bool) {
-	if !v.hasSpan {
+	if v.src == nil || !v.src.hasSpan {
 		return Span{}, false
 	}
-	return v.span, true
+	return v.src.span, true
 }
 
 // HasSpan reports whether v has a source span.
-func (v Value) HasSpan() bool { return v.hasSpan }
+func (v Value) HasSpan() bool { return v.src != nil && v.src.hasSpan }
 
-func (v Value) IsNil() bool { return v.k == KindSymbol && v.sym == Nil.sym }
+func (v Value) IsNil() bool { return v.k == KindSymbol && v.h == Nil.h }
 
-func (v Value) IsTrue() bool { return v.k == KindSymbol && v.sym == True.sym }
+func (v Value) IsTrue() bool { return v.k == KindSymbol && v.h == True.h }
 
 // IsFalse reports whether v is false.
-func (v Value) IsFalse() bool { return v.k == KindSymbol && v.sym == False.sym }
+func (v Value) IsFalse() bool { return v.k == KindSymbol && v.h == False.h }
 
 func (v Value) IsBool() bool { return v.IsTrue() || v.IsFalse() }
 
@@ -358,17 +456,17 @@ func (v Value) BigInt() *big.Int {
 	if v.k != KindInt {
 		return new(big.Int)
 	}
-	if v.big != nil {
-		return new(big.Int).Set(v.big)
+	if b := v.bigInt(); b != nil {
+		return new(big.Int).Set(b)
 	}
-	return big.NewInt(v.i)
+	return big.NewInt(v.n)
 }
 
 func (v Value) asBig() *big.Int {
-	if v.big != nil {
-		return v.big
+	if b := v.bigInt(); b != nil {
+		return b
 	}
-	return big.NewInt(v.i)
+	return big.NewInt(v.n)
 }
 
 // Float64 returns the float, or 0 if v is not a float.
@@ -376,20 +474,20 @@ func (v Value) Float64() float64 {
 	if v.k != KindFloat {
 		return 0
 	}
-	return v.f
+	return v.floatVal()
 }
 
 // AsFloat64 converts an int or float to float64.
 func (v Value) AsFloat64() (float64, bool) {
 	switch v.k {
 	case KindFloat:
-		return v.f, true
+		return v.floatVal(), true
 	case KindInt:
-		if v.big != nil {
-			f, _ := new(big.Float).SetInt(v.big).Float64()
+		if b := v.bigInt(); b != nil {
+			f, _ := new(big.Float).SetInt(b).Float64()
 			return f, true
 		}
-		return float64(v.i), true
+		return float64(v.n), true
 	default:
 		return 0, false
 	}
@@ -408,7 +506,7 @@ func (v Value) Name() string {
 	if v.k != KindSymbol {
 		return ""
 	}
-	return v.sym.Value()
+	return v.h.Value()
 }
 
 // Items returns list elements. The slice must not be mutated.
@@ -416,18 +514,27 @@ func (v Value) Items() []Value {
 	if v.k != KindList {
 		return nil
 	}
-	return v.xs
+	if ld := v.list(); ld != nil {
+		return ld.xs
+	}
+	return nil
 }
 
 // IsVec reports whether v is a [] list rather than a () call.
-func (v Value) IsVec() bool { return v.k == KindList && v.vec }
+func (v Value) IsVec() bool {
+	if v.k != KindList {
+		return false
+	}
+	ld := v.list()
+	return ld != nil && ld.vec
+}
 
 // Pairs returns map entries in insertion order.
 func (v Value) Pairs() []MapPair {
 	if v.k != KindMap {
 		return nil
 	}
-	return v.mp.pairs()
+	return v.mapData().pairs()
 }
 
 // MapGet looks up a string key.
@@ -435,7 +542,45 @@ func (v Value) MapGet(key string) (Value, bool) {
 	if v.k != KindMap {
 		return Nil, false
 	}
-	return v.mp.get(key)
+	return v.mapData().get(key)
+}
+
+// Native returns the boxed host object.
+func (v Value) Native() (any, bool) {
+	if v.k != KindNative {
+		return nil, false
+	}
+	return v.p, true
+}
+
+// As type-asserts a native value into dst, which must be a non-nil *T.
+func (v Value) As(dst any) bool {
+	if v.k != KindNative || dst == nil {
+		return false
+	}
+	dp := reflect.ValueOf(dst)
+	if dp.Kind() != reflect.Ptr || dp.IsNil() {
+		return false
+	}
+	elem := dp.Elem()
+	if !elem.CanSet() {
+		return false
+	}
+	if v.p == nil {
+		switch elem.Kind() {
+		case reflect.Interface, reflect.Pointer, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan, reflect.UnsafePointer:
+			elem.Set(reflect.Zero(elem.Type()))
+			return true
+		default:
+			return false
+		}
+	}
+	sv := reflect.ValueOf(v.p)
+	if !sv.IsValid() || !sv.Type().AssignableTo(elem.Type()) {
+		return false
+	}
+	elem.Set(sv)
+	return true
 }
 
 func (v Value) commentText() string {
@@ -466,7 +611,7 @@ func reservedLit(v Value) bool {
 }
 
 func isSymName(v Value, name string) bool {
-	return v.k == KindSymbol && v.sym == unique.Make(name)
+	return v.k == KindSymbol && v.h == unique.Make(name)
 }
 
 func filterComments(xs []Value) []Value {
@@ -538,10 +683,28 @@ func formatFloat(f float64) string {
 }
 
 func formatInt(v Value) string {
-	if v.big != nil {
-		return v.big.String()
+	if b := v.bigInt(); b != nil {
+		return b.String()
 	}
-	return strconv.FormatInt(v.i, 10)
+	return strconv.FormatInt(v.n, 10)
+}
+
+func printNative(p any) string {
+	if p == nil {
+		return "#<native nil>"
+	}
+	return "#<native " + reflect.TypeOf(p).String() + ">"
+}
+
+func nativeEqual(a, b any) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	va, vb := reflect.ValueOf(a), reflect.ValueOf(b)
+	if va.Type() != vb.Type() || !va.Comparable() || !vb.Comparable() {
+		return false
+	}
+	return a == b
 }
 
 // String renders v for display, matching the language printer.
@@ -554,17 +717,20 @@ func printVal(v Value) string {
 	case KindInt:
 		return formatInt(v)
 	case KindFloat:
-		return formatFloat(v.f)
+		return formatFloat(v.floatVal())
 	case KindString:
 		return v.s
 	case KindSymbol:
 		return v.Name()
 	case KindFn:
 		return "#<fn>"
+	case KindNative:
+		return printNative(v.p)
 	case KindList:
+		xs := v.Items()
 		var b strings.Builder
 		b.WriteByte('[')
-		for i, x := range v.xs {
+		for i, x := range xs {
 			if i > 0 {
 				b.WriteByte(' ')
 			}
@@ -573,18 +739,19 @@ func printVal(v Value) string {
 		b.WriteByte(']')
 		return b.String()
 	case KindMap:
-		if v.mp.len() == 0 {
+		m := v.mapData()
+		if m.len() == 0 {
 			return "[:]"
 		}
 		var b strings.Builder
 		b.WriteByte('[')
-		for i, k := range v.mp.keys {
+		for i, k := range m.keys {
 			if i > 0 {
 				b.WriteByte(' ')
 			}
 			b.WriteString(k)
 			b.WriteString(": ")
-			b.WriteString(printVal(v.mp.vals[i]))
+			b.WriteString(printVal(m.vals[i]))
 		}
 		b.WriteByte(']')
 		return b.String()
@@ -602,13 +769,13 @@ func printVal(v Value) string {
 }
 
 // Equal reports value equality. 1 and 1.0 compare equal. Functions never
-// compare equal.
+// compare equal. Native values use == when the dynamic type is comparable.
 func (v Value) Equal(o Value) bool {
 	if v.k == KindInt && o.k == KindFloat {
-		return intFloatEqual(v, o.f)
+		return intFloatEqual(v, o.floatVal())
 	}
 	if v.k == KindFloat && o.k == KindInt {
-		return intFloatEqual(o, v.f)
+		return intFloatEqual(o, v.floatVal())
 	}
 	if v.k != o.k {
 		return false
@@ -617,32 +784,36 @@ func (v Value) Equal(o Value) bool {
 	case KindInt:
 		return v.asBig().Cmp(o.asBig()) == 0
 	case KindFloat:
-		return v.f == o.f
+		return v.floatVal() == o.floatVal()
 	case KindString, KindComment:
 		return v.s == o.s
 	case KindSymbol:
-		return v.sym == o.sym
+		return v.h == o.h
 	case KindFn:
 		return false
+	case KindNative:
+		return nativeEqual(v.p, o.p)
 	case KindQuote, KindUnquote, KindSplice:
 		return v.innerVal().Equal(o.innerVal())
 	case KindList:
-		if len(v.xs) != len(o.xs) {
+		xs, ys := v.Items(), o.Items()
+		if len(xs) != len(ys) {
 			return false
 		}
-		for i := range v.xs {
-			if !v.xs[i].Equal(o.xs[i]) {
+		for i := range xs {
+			if !xs[i].Equal(ys[i]) {
 				return false
 			}
 		}
 		return true
 	case KindMap:
-		if v.mp.len() != o.mp.len() {
+		m, om := v.mapData(), o.mapData()
+		if m.len() != om.len() {
 			return false
 		}
-		for i, k := range v.mp.keys {
-			ov, ok := o.mp.get(k)
-			if !ok || !v.mp.vals[i].Equal(ov) {
+		for i, k := range m.keys {
+			ov, ok := om.get(k)
+			if !ok || !m.vals[i].Equal(ov) {
 				return false
 			}
 		}
@@ -664,7 +835,7 @@ func intFloatEqual(i Value, f float64) bool {
 func cloneList(xs []Value, vec bool) Value {
 	out := make([]Value, len(xs))
 	copy(out, xs)
-	return Value{k: KindList, xs: out, vec: vec}
+	return listVal(out, vec)
 }
 
 // Comment returns a comment form. text is the source including ';'.
@@ -684,19 +855,25 @@ func (v Value) WithComment(cmt string) Value {
 
 // WithBlank marks v as following a blank line.
 func (v Value) WithBlank() Value {
-	v.blank = true
+	s := v.cloneSrc()
+	s.blank = true
+	v.src = s
 	return v
 }
 
 // WithBroke marks v as containing a newline in source.
 func (v Value) WithBroke() Value {
-	v.broke = true
+	s := v.cloneSrc()
+	s.broke = true
+	v.src = s
 	return v
 }
 
 // WithKeySpans records source spans of map keys.
 func (v Value) WithKeySpans(spans map[string]Span) Value {
-	v.keySpans = spans
+	s := v.cloneSrc()
+	s.keySpans = spans
+	v.src = s
 	return v
 }
 
@@ -713,19 +890,29 @@ func (v Value) IsKey() bool { return v.isKeySym() }
 func (v Value) KeyName() string { return v.keyName() }
 
 // TrailingComment is the inline comment after v, if any.
-func (v Value) TrailingComment() string { return v.cmt }
+func (v Value) TrailingComment() string {
+	if v.src == nil {
+		return ""
+	}
+	return v.src.cmt
+}
 
 // CommentText is the comment form body, including ';'.
 func (v Value) CommentText() string { return v.commentText() }
 
 // Blank reports whether a blank line preceded v.
-func (v Value) Blank() bool { return v.blank }
+func (v Value) Blank() bool { return v.src != nil && v.src.blank }
 
 // Broke reports whether v's source contained a newline.
-func (v Value) Broke() bool { return v.broke }
+func (v Value) Broke() bool { return v.src != nil && v.src.broke }
 
 // KeySpans returns recorded map key spans.
-func (v Value) KeySpans() map[string]Span { return v.keySpans }
+func (v Value) KeySpans() map[string]Span {
+	if v.src == nil {
+		return nil
+	}
+	return v.src.keySpans
+}
 
 // FilterComments drops comment forms.
 func FilterComments(xs []Value) []Value { return filterComments(xs) }

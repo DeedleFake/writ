@@ -531,6 +531,8 @@ func (p *printer) formatAtomCore(v runtime.Value) string {
 		return runtime.FormatSymbol(v.Name())
 	case runtime.KindFn:
 		return "#<fn>"
+	case runtime.KindNative:
+		return runtime.Print(v)
 	case runtime.KindComment:
 		return v.CommentText()
 	case runtime.KindList:

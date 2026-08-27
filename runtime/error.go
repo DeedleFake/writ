@@ -58,8 +58,8 @@ func errAtf(start, end int, format string, args ...any) *Error {
 }
 
 func errVal(v Value, msg string) *Error {
-	s, e := v.span.Start, v.span.End
-	if e == 0 && s == 0 && !v.hasSpan {
+	s, e := v.srcSpan().Start, v.srcSpan().End
+	if e == 0 && s == 0 && !v.HasSpan() {
 		return errMsg(msg)
 	}
 	return errAt(s, e, msg)

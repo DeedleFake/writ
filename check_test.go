@@ -335,3 +335,73 @@ func TestCheckModInt(t *testing.T) {
 		t.Fatal("mod float")
 	}
 }
+
+type nativeHandle struct{ n int }
+
+type nativeOther struct{ n int }
+
+func TestCheckNativeHostArrow(t *testing.T) {
+	rt := New()
+	if err := rt.RegisterBuiltin("mk-box", func(args []runtime.Value) (runtime.Value, error) {
+		return runtime.Native(&nativeHandle{n: 7}), nil
+	}, types.PosArrow(types.Native[*nativeHandle]())); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.RegisterBuiltin("use-box", func(args []runtime.Value) (runtime.Value, error) {
+		var h *nativeHandle
+		if !args[0].As(&h) || h == nil {
+			return runtime.Nil, runtime.ErrorMsg("want handle")
+		}
+		return runtime.Int64(int64(h.n)), nil
+	}, types.PosArrow(types.IntType(), types.Native[*nativeHandle]())); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.RegisterBuiltin("echo-box", func(args []runtime.Value) (runtime.Value, error) {
+		return args[0], nil
+	}, types.PosArrow(types.Native[*nativeHandle](), types.Native[*nativeHandle]())); err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.RegisterBuiltin("mk-other", func(args []runtime.Value) (runtime.Value, error) {
+		return runtime.Native(&nativeOther{n: 1}), nil
+	}, types.PosArrow(types.Native[*nativeOther]())); err != nil {
+		t.Fatal(err)
+	}
+
+	res := rt.Check("(use-box (mk-box))")
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("accept matching native: %v", res.Diagnostics)
+	}
+	res = rt.Check("(use-box 1)")
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("expected native type error")
+	}
+	res = rt.Check("(use-box (mk-other))")
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("expected Native[A] vs Native[B] error")
+	}
+	res = rt.Check(`(let [x: (mk-box)] (use-box x))`)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("var from host return: %v", res.Diagnostics)
+	}
+
+	v, err := rt.Eval("(use-box (mk-box))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(7)) {
+		t.Fatalf("round-trip: %v", v)
+	}
+
+	echoed, err := rt.Eval("(echo-box (mk-box))")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h *nativeHandle
+	if !echoed.As(&h) || h == nil || h.n != 7 {
+		t.Fatalf("echo As: %#v", echoed)
+	}
+	raw, ok := echoed.Native()
+	if !ok || raw.(*nativeHandle) != h {
+		t.Fatal("identity not preserved")
+	}
+}

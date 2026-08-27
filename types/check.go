@@ -225,6 +225,8 @@ func (chk *checker) infer(v runtime.Value, env typeEnv) Type {
 		return ExactString(v.Text())
 	case runtime.KindFn:
 		return FnType()
+	case runtime.KindNative:
+		return kindOf(v)
 	case runtime.KindQuote:
 		return chk.typeQuote(v.Inner(), env, 1)
 	case runtime.KindUnquote:

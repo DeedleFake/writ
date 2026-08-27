@@ -118,7 +118,7 @@ func (s *compileState) addOn(ev Value, paramsForm Value, body []Value) error {
 	if ev.k != KindSymbol {
 		return errMsg("(on event (args...) body) needs an event name")
 	}
-	if paramsForm.k != KindList || paramsForm.vec {
+	if paramsForm.k != KindList || paramsForm.IsVec() {
 		return errMsg("(on event (args...) body) needs a parameter list")
 	}
 	name := ev.Name()
@@ -165,15 +165,15 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 		if form.k == KindComment {
 			continue
 		}
-		if form.k == KindList && !form.vec && len(form.xs) > 0 && isSymName(form.xs[0], "on") {
+		if form.k == KindList && !form.IsVec() && len(form.Items()) > 0 && isSymName(form.Items()[0], "on") {
 			var ev, paramsForm Value
-			if len(form.xs) > 1 {
-				ev = form.xs[1]
+			if len(form.Items()) > 1 {
+				ev = form.Items()[1]
 			}
-			if len(form.xs) > 2 {
-				paramsForm = form.xs[2]
+			if len(form.Items()) > 2 {
+				paramsForm = form.Items()[2]
 			}
-			if err := s.addOn(ev, paramsForm, form.xs[3:]); err != nil {
+			if err := s.addOn(ev, paramsForm, form.Items()[3:]); err != nil {
 				return Program{}, err
 			}
 			continue
@@ -282,18 +282,18 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 			macroTable[got.Name] = s.macroMap[got.Name]
 			return true, nil
 		}
-		if form.k == KindList && !form.vec && len(form.xs) > 0 && isSymName(form.xs[0], "on") {
+		if form.k == KindList && !form.IsVec() && len(form.Items()) > 0 && isSymName(form.Items()[0], "on") {
 			var ev, paramsForm Value
-			if len(form.xs) > 1 {
-				ev = form.xs[1]
+			if len(form.Items()) > 1 {
+				ev = form.Items()[1]
 			}
-			if len(form.xs) > 2 {
-				paramsForm = form.xs[2]
+			if len(form.Items()) > 2 {
+				paramsForm = form.Items()[2]
 			}
 			if ev.k != KindSymbol {
 				return false, errMsg("(on event (args...) body) needs an event name")
 			}
-			if paramsForm.k != KindList || paramsForm.vec {
+			if paramsForm.k != KindList || paramsForm.IsVec() {
 				return false, errMsg("(on event (args...) body) needs a parameter list")
 			}
 			params, err := parseParams(paramsForm, "on")
@@ -305,7 +305,7 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 				return false, errf("unreachable clause for %s", ev.Name())
 			}
 			pf := paramsForm
-			list = append(list, Clause{Params: params, Body: form.xs[3:], ParamsForm: &pf})
+			list = append(list, Clause{Params: params, Body: form.Items()[3:], ParamsForm: &pf})
 			s.onMap[ev.Name()] = list
 			return true, nil
 		}
@@ -369,7 +369,7 @@ type DefHead struct {
 }
 
 func asDefForm(form Value, kw string) (DefHead, bool, error) {
-	if form.k != KindList || len(form.xs) == 0 || !isSymName(form.xs[0], kw) {
+	if form.k != KindList || len(form.Items()) == 0 || !isSymName(form.Items()[0], kw) {
 		return DefHead{}, false, nil
 	}
 	h, err := parseDefHead(form, kw)
@@ -386,30 +386,30 @@ func AsDefForm(form Value, kw string) (DefHead, bool, error) {
 
 func parseDefHead(form Value, kw string) (DefHead, error) {
 	hint := "(" + kw + " (name args...) body)"
-	if form.k != KindList || len(form.xs) == 0 || !isSymName(form.xs[0], kw) {
+	if form.k != KindList || len(form.Items()) == 0 || !isSymName(form.Items()[0], kw) {
 		return DefHead{}, errMsg(hint)
 	}
-	if len(form.xs) < 2 {
+	if len(form.Items()) < 2 {
 		return DefHead{}, errMsg(hint)
 	}
-	head := form.xs[1]
-	if head.k != KindList || head.vec {
+	head := form.Items()[1]
+	if head.k != KindList || head.IsVec() {
 		return DefHead{}, errMsg(hint)
 	}
-	if len(head.xs) == 0 {
+	if len(head.Items()) == 0 {
 		return DefHead{}, errMsg(hint + " needs a name")
 	}
-	nameForm := head.xs[0]
+	nameForm := head.Items()[0]
 	if nameForm.k != KindSymbol || nameForm.Name() == "" || strings.HasSuffix(nameForm.Name(), ":") {
 		return DefHead{}, errMsg(hint + " needs a name")
 	}
 	if nameForm.IsTrue() || nameForm.IsFalse() || nameForm.IsNil() {
 		return DefHead{}, errf("cannot redefine %s", nameForm.Name())
 	}
-	paramsForm := CallList(head.xs[1:]...)
-	paramsForm.xs = head.xs[1:]
-	if head.hasSpan {
-		paramsForm = paramsForm.withSpan(head.span.Start, head.span.End)
+	paramsForm := CallList(head.Items()[1:]...)
+	paramsForm = paramsForm.withItems(head.Items()[1:])
+	if head.HasSpan() {
+		paramsForm = paramsForm.withSpan(head.srcSpan().Start, head.srcSpan().End)
 	}
 	params, err := parseParams(paramsForm, kw)
 	if err != nil {
@@ -420,7 +420,7 @@ func parseDefHead(form Value, kw string) (DefHead, error) {
 		NameForm:   nameForm,
 		Params:     params,
 		ParamsForm: paramsForm,
-		Body:       form.xs[2:],
+		Body:       form.Items()[2:],
 		HeadForm:   head,
 	}, nil
 }
@@ -452,7 +452,7 @@ func parseParams(form Value, ctx string) (Params, error) {
 	if form.k != KindList {
 		return Params{}, errf("%s needs a parameter list", ctx)
 	}
-	if form.vec {
+	if form.IsVec() {
 		return Params{}, errf("%s needs a parameter list in (...)", ctx)
 	}
 	var mode string
@@ -460,8 +460,8 @@ func parseParams(form Value, ctx string) (Params, error) {
 	var keys []KeyPat
 	var seen []string
 	var rest string
-	for i := 0; i < len(form.xs); {
-		p := form.xs[i]
+	for i := 0; i < len(form.Items()); {
+		p := form.Items()[i]
 		if p.k == KindComment {
 			i++
 			continue
@@ -480,7 +480,7 @@ func parseParams(form Value, ctx string) (Params, error) {
 			if inner.k != KindSymbol || inner.Name() == "" || strings.HasSuffix(inner.Name(), ":") {
 				return Params{}, errMsg("@rest needs a name")
 			}
-			for _, x := range form.xs[i+1:] {
+			for _, x := range form.Items()[i+1:] {
 				if x.k != KindComment {
 					return Params{}, errMsg("@rest must be last")
 				}
@@ -510,9 +510,9 @@ func parseParams(form Value, ctx string) (Params, error) {
 				return Params{}, errf("duplicate parameter %s", name)
 			}
 			seen = append(seen, name)
-			nextOK := i+1 < len(form.xs) && !form.xs[i+1].isKeySym() && form.xs[i+1].k != KindComment
+			nextOK := i+1 < len(form.Items()) && !form.Items()[i+1].isKeySym() && form.Items()[i+1].k != KindComment
 			if nextOK {
-				pat, err := asPattern(form.xs[i+1])
+				pat, err := asPattern(form.Items()[i+1])
 				if err != nil {
 					return Params{}, err
 				}
@@ -684,10 +684,10 @@ func unreachableBy(prev []Clause, next Params) bool {
 func isFnSep(v Value) bool { return isSymName(v, "fn") }
 
 func isFnCall(v Value) bool {
-	if v.k != KindList || v.vec {
+	if v.k != KindList || v.IsVec() {
 		return false
 	}
-	xs := filterComments(v.xs)
+	xs := filterComments(v.Items())
 	return len(xs) > 0 && isSymName(xs[0], "fn")
 }
 
@@ -706,17 +706,17 @@ func walkSlots(v Value, onSlot func(name string, node Value) error) error {
 		if isFnCall(v) {
 			return nil
 		}
-		for _, x := range v.xs {
+		for _, x := range v.Items() {
 			if err := walkSlots(x, onSlot); err != nil {
 				return err
 			}
 		}
 		return nil
 	case KindMap:
-		if v.mp == nil {
+		if v.mapData() == nil {
 			return nil
 		}
-		for _, x := range v.mp.vals {
+		for _, x := range v.mapData().vals {
 			if err := walkSlots(x, onSlot); err != nil {
 				return err
 			}
@@ -757,17 +757,17 @@ func hasNestedFn(args []Value) bool {
 			if isFnCall(v) {
 				return true
 			}
-			for _, x := range v.xs {
+			for _, x := range v.Items() {
 				if walk(x) {
 					return true
 				}
 			}
 			return false
 		case KindMap:
-			if v.mp == nil {
+			if v.mapData() == nil {
 				return false
 			}
-			for _, x := range v.mp.vals {
+			for _, x := range v.mapData().vals {
 				if walk(x) {
 					return true
 				}
@@ -942,7 +942,7 @@ func containsStr(xs []string, s string) bool {
 }
 
 func makeFnVal(clauses []Clause, env *env) Value {
-	return Value{k: KindFn, fn: &fnVal{clauses: clauses, keys: unionKeys(clauses), env: env}}
+	return Value{k: KindFn, p: &fnVal{clauses: clauses, keys: unionKeys(clauses), env: env}}
 }
 
 func installFns(fns []NamedFn, env *env) {
