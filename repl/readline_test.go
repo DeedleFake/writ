@@ -7,18 +7,13 @@ import (
 	"testing"
 )
 
-func TestWordCompleter(t *testing.T) {
-	c := wordCompleter{words: []string{"+", "def", "defm"}}
-	got, n := c.Do([]rune("(de"), 3)
-	if n != 2 {
-		t.Fatalf("offset %d", n)
+func TestCompleteWord(t *testing.T) {
+	head, comps, tail := completeWord("(de", 3)
+	if head != "(" || tail != "" {
+		t.Fatalf("head %q tail %q", head, tail)
 	}
-	var s []string
-	for _, g := range got {
-		s = append(s, string(g))
-	}
-	joined := strings.Join(s, ",")
-	if !strings.Contains(joined, "f") || !strings.Contains(joined, "fm") {
+	joined := strings.Join(comps, ",")
+	if !strings.Contains(joined, "def") || !strings.Contains(joined, "defm") {
 		t.Fatalf("completions %q", joined)
 	}
 }

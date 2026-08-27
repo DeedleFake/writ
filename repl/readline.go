@@ -8,15 +8,17 @@ import (
 	"path/filepath"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"deedles.dev/writ/scanner"
-	"github.com/ergochat/readline"
+	"github.com/peterh/liner"
 	"golang.org/x/term"
 )
 
-func newLineReader(in io.Reader, out, errW io.Writer, history string) (lineReader, error) {
-	f, ok := in.(*os.File)
-	if !ok || !term.IsTerminal(int(f.Fd())) {
+func newLineReader(in io.Reader, out, _ io.Writer, history string) (lineReader, error) {
+	inFile, inOK := in.(*os.File)
+	outFile, outOK := out.(*os.File)
+	if !inOK || !outOK || !term.IsTerminal(int(inFile.Fd())) || !term.IsTerminal(int(outFile.Fd())) {
 		return newScanReader(in, out), nil
 	}
 	if history == "" {
@@ -27,24 +29,17 @@ func newLineReader(in io.Reader, out, errW io.Writer, history string) (lineReade
 			history = ""
 		}
 	}
-	cfg := &readline.Config{
-		Prompt:          prompt,
-		HistoryFile:     history,
-		InterruptPrompt: "^C",
-		EOFPrompt:       "exit",
-		AutoComplete:    wordCompleter{words: scanner.Words()},
-		Stdin:           f,
-		Stdout:          out,
-		Stderr:          errW,
-		FuncIsTerminal: func() bool {
-			return term.IsTerminal(int(f.Fd()))
-		},
+	s := liner.NewLiner()
+	s.SetCtrlCAborts(true)
+	s.SetWordCompleter(completeWord)
+	s.SetTabCompletionStyle(liner.TabPrints)
+	if history != "" {
+		if f, err := os.Open(history); err == nil {
+			_, _ = s.ReadHistory(f)
+			_ = f.Close()
+		}
 	}
-	rl, err := readline.NewFromConfig(cfg)
-	if err != nil {
-		return newScanReader(in, out), nil
-	}
-	return &rlReader{rl: rl}, nil
+	return &linerReader{s: s, history: history}, nil
 }
 
 func defaultHistoryFile() string {
@@ -55,44 +50,53 @@ func defaultHistoryFile() string {
 	return filepath.Join(dir, "writ", "history")
 }
 
-type rlReader struct {
-	rl *readline.Instance
+type linerReader struct {
+	s       *liner.State
+	history string
 }
 
-func (r *rlReader) ReadLine(prompt string) (string, error) {
-	r.rl.SetPrompt(prompt)
-	line, err := r.rl.ReadLine()
-	if err == readline.ErrInterrupt {
+func (r *linerReader) ReadLine(prompt string) (string, error) {
+	line, err := r.s.Prompt(prompt)
+	if err == liner.ErrPromptAborted {
 		return "", errInterrupt
+	}
+	if err == nil && strings.TrimSpace(line) != "" {
+		r.s.AppendHistory(line)
 	}
 	return line, err
 }
 
-func (r *rlReader) Close() error {
-	return r.rl.Close()
+func (r *linerReader) Close() error {
+	if r.history != "" {
+		if f, err := os.Create(r.history); err == nil {
+			_, _ = r.s.WriteHistory(f)
+			_ = f.Close()
+		}
+	}
+	return r.s.Close()
 }
 
-// Completes the atom at the cursor, including after '(' or '['.
-type wordCompleter struct {
-	words []string
-}
-
-func (c wordCompleter) Do(line []rune, pos int) ([][]rune, int) {
+func completeWord(line string, pos int) (head string, comps []string, tail string) {
 	if pos > len(line) {
 		pos = len(line)
 	}
 	start := pos
-	for start > 0 && isAtomChar(line[start-1]) {
-		start--
+	for start > 0 {
+		r, size := utf8.DecodeLastRuneInString(line[:start])
+		if !isAtomChar(r) {
+			break
+		}
+		start -= size
 	}
-	prefix := string(line[start:pos])
-	var out [][]rune
-	for _, w := range c.words {
+	prefix := line[start:pos]
+	head = line[:start]
+	tail = line[pos:]
+	for _, w := range scanner.Words() {
 		if strings.HasPrefix(w, prefix) {
-			out = append(out, []rune(w[len(prefix):]))
+			comps = append(comps, w)
 		}
 	}
-	return out, pos - start
+	return head, comps, tail
 }
 
 func isAtomChar(r rune) bool {
