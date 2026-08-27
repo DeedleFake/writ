@@ -67,9 +67,9 @@ type Span struct {
 	End   int
 }
 
-// MapPair is one map entry.
+// MapPair is one map entry. Key is a symbol.
 type MapPair struct {
-	Key   string
+	Key   Value
 	Value Value
 }
 
@@ -98,7 +98,7 @@ type listData struct {
 }
 
 type mapData struct {
-	keys []string
+	keys []Value
 	vals []Value
 	idx  map[string]int
 }
@@ -323,7 +323,7 @@ func (m *mapData) clone() *mapData {
 		return newMap()
 	}
 	out := &mapData{
-		keys: append([]string(nil), m.keys...),
+		keys: append([]Value(nil), m.keys...),
 		vals: append([]Value(nil), m.vals...),
 		idx:  make(map[string]int, len(m.idx)),
 	}
@@ -344,13 +344,14 @@ func (m *mapData) get(k string) (Value, bool) {
 	return m.vals[i], true
 }
 
-func (m *mapData) put(k string, v Value) {
-	if i, ok := m.idx[k]; ok {
+func (m *mapData) put(k Value, v Value) {
+	name := k.Name()
+	if i, ok := m.idx[name]; ok {
 		m.vals[i] = v
 		return
 	}
-	m.idx[k] = len(m.keys)
-	m.keys = append(m.keys, k)
+	m.idx[name] = len(m.keys)
+	m.keys = append(m.keys, Symbol(name))
 	m.vals = append(m.vals, v)
 }
 
@@ -363,7 +364,7 @@ func (m *mapData) del(k string) {
 	m.vals = append(m.vals[:i], m.vals[i+1:]...)
 	delete(m.idx, k)
 	for j := i; j < len(m.keys); j++ {
-		m.idx[m.keys[j]] = j
+		m.idx[m.keys[j].Name()] = j
 	}
 }
 
@@ -537,7 +538,7 @@ func (v Value) Pairs() []MapPair {
 	return v.mapData().pairs()
 }
 
-// MapGet looks up a string key.
+// MapGet looks up a symbol by name.
 func (v Value) MapGet(key string) (Value, bool) {
 	if v.k != KindMap {
 		return Nil, false
@@ -749,7 +750,7 @@ func printVal(v Value) string {
 			if i > 0 {
 				b.WriteByte(' ')
 			}
-			b.WriteString(k)
+			b.WriteString(formatSymName(k.Name()))
 			b.WriteString(": ")
 			b.WriteString(printVal(m.vals[i]))
 		}
@@ -812,7 +813,7 @@ func (v Value) Equal(o Value) bool {
 			return false
 		}
 		for i, k := range m.keys {
-			ov, ok := om.get(k)
+			ov, ok := om.get(k.Name())
 			if !ok || !m.vals[i].Equal(ov) {
 				return false
 			}

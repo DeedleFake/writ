@@ -214,15 +214,15 @@ func (p *printer) formatMap(v runtime.Value, indent int) string {
 	}
 	parts := make([]string, len(pairs))
 	for i, pair := range pairs {
-		parts[i] = pair.Key + ": " + p.formatInline(pair.Value)
+		parts[i] = runtime.FormatSymbol(pair.Key.Name()) + ": " + p.formatInline(pair.Value)
 	}
 	inline := "[" + strings.Join(parts, " ") + "]"
 	col := indent * 2
 	if !hasBreakComment(v) && !v.Broke() && len(inline)+col <= maxInline {
 		return suffixCmt(v, inline)
 	}
-	pairText := func(k string, val runtime.Value) string {
-		return prefixLines(k+": ", p.formatVal(val, indent+1))
+	pairText := func(k runtime.Value, val runtime.Value) string {
+		return prefixLines(runtime.FormatSymbol(k.Name())+": ", p.formatVal(val, indent+1))
 	}
 	var lines []string
 	pushPrefixed(&lines, "[", pairText(pairs[0].Key, pairs[0].Value))

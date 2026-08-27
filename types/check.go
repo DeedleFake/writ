@@ -259,7 +259,7 @@ func (chk *checker) infer(v runtime.Value, env typeEnv) Type {
 		}
 		var fields []mapField
 		for _, pair := range v.Pairs() {
-			fields = append(fields, mapField{name: pair.Key, t: chk.typeForm(pair.Value, env)})
+			fields = append(fields, mapField{name: pair.Key.Name(), t: chk.typeForm(pair.Value, env)})
 		}
 		if v.KeySpans() != nil {
 			for k, span := range v.KeySpans() {
@@ -589,7 +589,7 @@ func (chk *checker) typeQuote(v runtime.Value, env typeEnv, depth int) Type {
 		}
 		var fields []mapField
 		for _, pair := range v.Pairs() {
-			fields = append(fields, mapField{name: pair.Key, t: chk.typeQuote(pair.Value, env, depth)})
+			fields = append(fields, mapField{name: pair.Key.Name(), t: chk.typeQuote(pair.Value, env, depth)})
 		}
 		return tMap(fields, nil)
 	case runtime.KindSymbol:
@@ -1347,7 +1347,7 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 			arg = pos[0]
 		}
 		chk.expect(arg, mapyType(), at(0), name)
-		return tList(Tuple(StringType(), Any()))
+		return tList(Tuple(SymbolType(), Any()))
 	case "from-pairs":
 		anyT := Any()
 		return tDyn(tMap(nil, &anyT))
@@ -1357,7 +1357,7 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 			arg = pos[0]
 		}
 		chk.expect(arg, mapyType(), at(0), name)
-		return tList(stringyType())
+		return tList(SymbolType())
 	case "vals":
 		arg := NilType()
 		if len(pos) > 0 {

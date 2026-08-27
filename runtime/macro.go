@@ -134,9 +134,10 @@ func hygienic(v Value, imported []Value, subst map[string]string, h *hygState) V
 				m := newMap()
 				if binds.mapData() != nil {
 					for i, k := range binds.mapData().keys {
-						nk := h.fresh(k)
-						next[k] = nk
-						m.put(nk, hygienic(binds.mapData().vals[i], imported, subst, h))
+						old := k.Name()
+						nk := h.fresh(old)
+						next[old] = nk
+						m.put(Symbol(nk), hygienic(binds.mapData().vals[i], imported, subst, h))
 					}
 				}
 				newBinds = binds

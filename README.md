@@ -47,7 +47,7 @@ Integers are arbitrary-precision. `1` is an integer; `1.0` is a float. `+`, `-`,
 (pipe xs (map (fn * #1 2)) (reduce 0 (fn + #1 #2)))
 ```
 
-Lists are `[a b c]`. Maps are `[k: v]` or empty `[:]`. Mixing plain items and `k:` pairs in one `[]` is a parse error.
+Lists are `[a b c]`. Maps are `[k: v]` or empty `[:]`. Mixing plain items and `k:` pairs in one `[]` is a parse error. Map keys are symbols: `(get m 'k)`.
 
 A `defm` body is expand-time fragments. Each result is one form at the call site. A top-level `@` splices a list of forms into that sequence. In a `fn` / `let` / `if` / `after` / `on` body, and at the top of a script, a call that expands to several forms is those forms in place. In expression position they run in order and the value is the last form.
 
@@ -73,7 +73,7 @@ Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbs
 
 ```
 (let [lib: (import "lib.writ")]
-  ((get lib "double") 21))
+  ((get lib 'double) 21))
 ```
 
 ## Embed

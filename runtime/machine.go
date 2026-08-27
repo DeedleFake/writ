@@ -164,7 +164,7 @@ func (m *Machine) setVar(key string, val Value) {
 		m.props.del(key)
 		return
 	}
-	m.props.put(key, val)
+	m.props.put(Symbol(key), val)
 }
 
 // LookupLocked returns a top-level binding. Caller must hold Lock.
@@ -446,7 +446,7 @@ func mapFromNames(names map[string]Value) Value {
 	sort.Strings(keys)
 	pairs := make([]MapPair, len(keys))
 	for i, k := range keys {
-		pairs[i] = MapPair{Key: k, Value: names[k]}
+		pairs[i] = MapPair{Key: Symbol(k), Value: names[k]}
 	}
 	return MapFrom(pairs...)
 }

@@ -822,8 +822,12 @@ func numType() Type { return tOr([]Type{IntType(), FloatType()}) }
 
 func stringyType() Type { return tOr([]Type{StringType(), UnknownString()}) }
 
+func nameyType() Type {
+	return tOr([]Type{SymbolType(), UnknownSymbol(), TrueType(), FalseType(), NilType()})
+}
+
 func pathWant() Type {
-	key := stringyType()
+	key := nameyType()
 	return tOr([]Type{key, EmptyList(), tList(key), Tuple(key)})
 }
 
@@ -842,23 +846,39 @@ type pathKeysResult struct {
 	keys    []string
 }
 
+func pathKeyName(t Type) (string, bool) {
+	t = unwrap(t)
+	if t.k == tySym && t.has {
+		return t.s, true
+	}
+	if t.k == tyBool && t.has {
+		if t.b {
+			return "true", true
+		}
+		return "false", true
+	}
+	if t.k == tyNil {
+		return "nil", true
+	}
+	return "", false
+}
+
 func pathKeys(t Type) pathKeysResult {
 	t = unwrap(t)
-	if t.k == tyStr && t.has {
-		return pathKeysResult{keys: []string{t.s}}
+	if name, ok := pathKeyName(t); ok {
+		return pathKeysResult{keys: []string{name}}
 	}
-	if t.k == tyUStr || t.k == tyStr {
+	if t.k == tySym || t.k == tyUSym || t.k == tyBool {
 		return pathKeysResult{unknown: true}
 	}
 	if t.k == tyTuple {
 		var keys []string
 		for _, item := range t.items {
-			u := unwrap(item)
-			if u.k == tyStr && u.has {
-				keys = append(keys, u.s)
-			} else {
+			name, ok := pathKeyName(unwrap(item))
+			if !ok {
 				return pathKeysResult{unknown: true}
 			}
+			keys = append(keys, name)
 		}
 		if len(keys) == 0 {
 			return pathKeysResult{none: true}
@@ -1047,7 +1067,7 @@ func kindOf(v runtime.Value) Type {
 		}
 		var fields []mapField
 		for _, pair := range v.Pairs() {
-			fields = append(fields, mapField{name: pair.Key, t: kindOf(pair.Value)})
+			fields = append(fields, mapField{name: pair.Key.Name(), t: kindOf(pair.Value)})
 		}
 		return tMap(fields, nil)
 	case runtime.KindFn:
@@ -1078,7 +1098,7 @@ func collectAliases(v runtime.Value, into map[string]string) {
 		for _, pair := range v.Pairs() {
 			val := pair.Value
 			if val.Kind() == runtime.KindSymbol && val.Name() != "true" && val.Name() != "false" && val.Name() != "nil" {
-				into[pair.Key] = val.Name()
+				into[pair.Key.Name()] = val.Name()
 			} else {
 				collectAliases(val, into)
 			}

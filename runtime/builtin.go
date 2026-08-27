@@ -32,10 +32,13 @@ func asFloat(v Value, ctx string) (float64, error) {
 }
 
 func asName(v Value) (string, error) {
-	if v.k == KindString {
-		return v.s, nil
+	if v.k == KindSymbol {
+		if v.isKeySym() {
+			return v.keyName(), nil
+		}
+		return v.Name(), nil
 	}
-	return "", errMsg("expected a name")
+	return "", errMsg("expected a symbol")
 }
 
 func asPath(v Value, ctx string) ([]string, error) {
@@ -55,7 +58,7 @@ func asPath(v Value, ctx string) ([]string, error) {
 	}
 	s, err := asName(v)
 	if err != nil {
-		return nil, errf("%s needs a key", ctx)
+		return nil, errf("%s needs a symbol", ctx)
 	}
 	return []string{s}, nil
 }
@@ -546,7 +549,7 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		var out []Value
 		if args[0].mapData() != nil {
 			for i, k := range args[0].mapData().keys {
-				out = append(out, List(String(k), args[0].mapData().vals[i]))
+				out = append(out, List(k, args[0].mapData().vals[i]))
 			}
 		}
 		return List(out...), nil
@@ -569,9 +572,7 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		}
 		var out []Value
 		if args[0].mapData() != nil {
-			for _, k := range args[0].mapData().keys {
-				out = append(out, String(k))
-			}
+			out = append(out, args[0].mapData().keys...)
 		}
 		return List(out...), nil
 	case "vals":
@@ -769,21 +770,25 @@ func asSeq(v Value, ctx string) ([]Value, error) {
 		}
 		out := make([]Value, len(v.mapData().keys))
 		for i, k := range v.mapData().keys {
-			out[i] = List(String(k), v.mapData().vals[i])
+			out[i] = List(k, v.mapData().vals[i])
 		}
 		return out, nil
 	}
 	return nil, errf("%s needs a list or a map", ctx)
 }
 
-func asPair(v Value, ctx string) (string, Value, error) {
+func asPair(v Value, ctx string) (Value, Value, error) {
 	if v.k != KindList || len(v.Items()) != 2 {
-		return "", Value{}, errf("%s needs [\"key\" value] pairs", ctx)
+		return Value{}, Value{}, errf("%s needs [key value] pairs", ctx)
 	}
-	if v.Items()[0].k != KindString {
-		return "", Value{}, errf("%s needs string keys", ctx)
+	k := v.Items()[0]
+	if k.k != KindSymbol {
+		return Value{}, Value{}, errf("%s needs symbol keys", ctx)
 	}
-	return v.Items()[0].s, v.Items()[1], nil
+	if k.isKeySym() {
+		k = Symbol(k.keyName())
+	}
+	return k, v.Items()[1], nil
 }
 
 func mapGetPath(m Value, path []string, ctx string) (Value, error) {
@@ -830,7 +835,7 @@ func mapSetPath(m Value, path []string, val Value, ctx string) (Value, error) {
 		if next.IsNil() && i == len(path)-1 {
 			base.del(k)
 		} else {
-			base.put(k, next)
+			base.put(Symbol(k), next)
 		}
 		return Value{k: KindMap, p: base}, nil
 	}

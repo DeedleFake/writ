@@ -27,7 +27,7 @@ func TestCLIRunFmtCheck(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(dir, "hello.writ")
-	if err := os.WriteFile(src, []byte("(def (main) (print ((get (import \"lib.writ\") \"n\"))))\n"), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte("(def (main) (print ((get (import \"lib.writ\") 'n))))\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	run := exec.Command(bin, "run", src)
@@ -148,7 +148,7 @@ func TestCLIReplSearchPath(t *testing.T) {
 	if err := os.WriteFile(lib, []byte("(def (n) 3)\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	in := "(print ((get (import \"lib.writ\") \"n\")))\n"
+	in := "(print ((get (import \"lib.writ\") 'n)))\n"
 	for _, args := range [][]string{{"repl", "-I", dir}, {"-I", dir}} {
 		cmd := exec.Command(bin, args...)
 		cmd.Stdin = strings.NewReader(in)

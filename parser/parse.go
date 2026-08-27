@@ -260,7 +260,7 @@ func finishBracket(xs []runtime.Value) (runtime.Value, error) {
 				return runtime.Value{}, runtime.ErrorMsg("map key needs a value")
 			}
 			name := a.KeyName()
-			pairs = append(pairs, runtime.MapPair{Key: name, Value: items[i+1]})
+			pairs = append(pairs, runtime.MapPair{Key: runtime.Symbol(name), Value: items[i+1]})
 			if sp, ok := a.Span(); ok {
 				keySpans[name] = sp
 			}

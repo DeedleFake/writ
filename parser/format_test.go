@@ -62,7 +62,7 @@ func formEq(a, b runtime.Value) bool {
 			return false
 		}
 		for i, pair := range ap {
-			ov, ok := b.MapGet(pair.Key)
+			ov, ok := b.MapGet(pair.Key.Name())
 			if !ok || !formEq(pair.Value, ov) {
 				return false
 			}

@@ -27,8 +27,8 @@ func TestCheckIntFloat(t *testing.T) {
 
 func TestCheckDynamicVsStatic(t *testing.T) {
 	ok := `
-(set-prop "hits" 0)
-(+ (get-prop "hits") 1)
+(set-prop 'hits 0)
+(+ (get-prop 'hits) 1)
 `
 	res := Check(ok)
 	if len(res.Diagnostics) != 0 {
@@ -43,7 +43,7 @@ func TestCheckDynamicVsStatic(t *testing.T) {
 	if !foundDyn {
 		t.Fatalf("expected dynamic int hint, got %#v", res.Hints)
 	}
-	bad := `(+ (get-prop "hits") 1)`
+	bad := `(+ (get-prop 'hits) 1)`
 	res = Check(bad)
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("get-prop with no writes should be nil, not a number")
@@ -206,6 +206,17 @@ func TestCheckArity(t *testing.T) {
 	}
 }
 
+func TestCheckMapSymbolKeys(t *testing.T) {
+	res := Check(`(get [a: 1] 'a)`)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("symbol key: %v", res.Diagnostics)
+	}
+	res = Check(`(get [a: 1] "a")`)
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("expected error for string map key")
+	}
+}
+
 func TestCheckKeywordParamName(t *testing.T) {
 	res := Check(`
 (def (greet name: n) name)
@@ -226,7 +237,7 @@ func TestCheckImportedArrows(t *testing.T) {
 		t.Fatal(err)
 	}
 	use := filepath.Join(dir, "bad.writ")
-	if err := os.WriteFile(use, []byte(`((get (import "lib.writ") "add") 1 "x")`), 0o644); err != nil {
+	if err := os.WriteFile(use, []byte(`((get (import "lib.writ") 'add) 1 "x")`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	res = New().CheckFile(use)
@@ -252,7 +263,7 @@ func TestCheckFileImportUsesScriptDir(t *testing.T) {
 		t.Fatal(err)
 	}
 	cwdsec := filepath.Join(root, "cwdsec.writ")
-	if err := os.WriteFile(cwdsec, []byte(`(set-prop "leaked" 1)`), 0o644); err != nil {
+	if err := os.WriteFile(cwdsec, []byte(`(set-prop 'leaked 1)`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	evil := filepath.Join(jail, "evil.writ")
@@ -314,11 +325,11 @@ func TestCheckPrintAligned(t *testing.T) {
 func TestCheckDefmFragments(t *testing.T) {
 	res := Check(`
 (defm (example @rest)
-  '(set-prop "hit" true)
+  '(set-prop 'hit true)
   @rest)
 (def (f)
-  (example (set-prop "n" 7))
-  (get-prop "n"))
+  (example (set-prop 'n 7))
+  (get-prop 'n))
 `)
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("defm fragments: %v", res.Diagnostics)

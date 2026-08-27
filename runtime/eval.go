@@ -526,7 +526,7 @@ func evalLet(args []Value, env *env, c *ctx) (Value, error) {
 	child := makeEnv(env)
 	if m.mapData() != nil {
 		for i, k := range m.mapData().keys {
-			child.set(k, m.mapData().vals[i])
+			child.set(k.Name(), m.mapData().vals[i])
 		}
 	}
 	last := Nil

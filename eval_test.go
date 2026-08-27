@@ -104,15 +104,15 @@ func TestEvalListsMaps(t *testing.T) {
 	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("first: %v", v)
 	}
-	v = evals(t, `(get [a: 1 b: "x"] "a")`)
+	v = evals(t, `(get [a: 1 b: "x"] 'a)`)
 	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("get: %v", v)
 	}
-	v = evals(t, `(get [a: [b: 2]] ["a" "b"])`)
+	v = evals(t, `(get [a: [b: 2]] ['a 'b])`)
 	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("get path: %v", v)
 	}
-	v = evals(t, `(set [:] "k" 1)`)
+	v = evals(t, `(set [:] 'k 1)`)
 	got, _ := v.MapGet("k")
 	if !got.Equal(runtime.Int64(1)) {
 		t.Fatalf("set: %v", v)
@@ -122,9 +122,17 @@ func TestEvalListsMaps(t *testing.T) {
 	if !a.Equal(runtime.Int64(3)) {
 		t.Fatalf("merge: %v", v)
 	}
-	v = evals(t, `(from-pairs [["x" 1] ["y" 2]])`)
+	v = evals(t, `(from-pairs [['x 1] ['y 2]])`)
 	if n := len(v.Pairs()); n != 2 {
 		t.Fatalf("from-pairs: %v", v)
+	}
+	v = evals(t, `(keys [a: 1])`)
+	if len(v.Items()) != 1 || !v.Items()[0].Equal(runtime.Symbol("a")) {
+		t.Fatalf("keys: %v", v)
+	}
+	err := evalErr(t, `(get [a: 1] "a")`)
+	if !strings.Contains(err.Error(), "symbol") {
+		t.Fatalf("string key: %v", err)
 	}
 }
 
@@ -250,11 +258,11 @@ func TestEvalMacroFragments(t *testing.T) {
 	rt := New()
 	src := `
 (defm (example @rest)
-  '(set-prop "hit" true)
+  '(set-prop 'hit true)
   @rest)
 (def (f)
-  (example (set-prop "n" 7))
-  (get-prop "n"))
+  (example (set-prop 'n 7))
+  (get-prop 'n))
 (f)
 `
 	v, err := rt.Eval(src)
@@ -270,10 +278,10 @@ func TestEvalMacroFragments(t *testing.T) {
 
 	v = evals(t, `
 (defm (example @rest)
-  '(set-prop "a" 1)
+  '(set-prop 'a 1)
   @rest)
-(example (set-prop "b" 2))
-(get-prop "b")
+(example (set-prop 'b 2))
+(get-prop 'b)
 `)
 	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("top-level splice: %v", v)
@@ -300,11 +308,11 @@ func TestEvalMacroFragments(t *testing.T) {
 
 	v = evals(t, `
 (defm (example @rest)
-  '(set-prop "a" 1)
+  '(set-prop 'a 1)
   @rest)
 (if true
-  (example (set-prop "b" 2))
-  (get-prop "b")
+  (example (set-prop 'b 2))
+  (get-prop 'b)
   else 0)
 `)
 	if !v.Equal(runtime.Int64(2)) {
@@ -313,11 +321,11 @@ func TestEvalMacroFragments(t *testing.T) {
 
 	v = evals(t, `
 (defm (example @rest)
-  '(set-prop "a" 1)
+  '(set-prop 'a 1)
   @rest)
 (let [x: 3]
-  (example (set-prop "b" x))
-  (get-prop "b"))
+  (example (set-prop 'b x))
+  (get-prop 'b))
 `)
 	if !v.Equal(runtime.Int64(3)) {
 		t.Fatalf("let body splice: %v", v)
@@ -339,7 +347,7 @@ func TestEvalMacroFragments(t *testing.T) {
 	rt = New()
 	if _, err := rt.Eval(`
 (defm (h)
-  '(on ping () (set-prop "n" 1)))
+  '(on ping () (set-prop 'n 1)))
 (h)
 `); err != nil {
 		t.Fatal(err)
@@ -439,10 +447,10 @@ func TestEvalResetAndOnAccumulate(t *testing.T) {
 	if _, err := rt.Eval(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval(`(set-prop "n" 0)`); err != nil {
+	if _, err := rt.Eval(`(set-prop 'n 0)`); err != nil {
 		t.Fatal(err)
 	}
-	on := `(on ping () (update-prop "n" (fn + #1 1)))`
+	on := `(on ping () (update-prop 'n (fn + #1 1)))`
 	if _, err := rt.Eval(on); err != nil {
 		t.Fatal(err)
 	}
@@ -474,7 +482,7 @@ func TestEvalResetAndOnAccumulate(t *testing.T) {
 	if !rt.GetProp("n").IsNil() {
 		t.Fatal("on after reset")
 	}
-	if _, err := rt.Eval(`(set-prop "n" 0)`); err != nil {
+	if _, err := rt.Eval(`(set-prop 'n 0)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.Eval(on); err != nil {
@@ -490,23 +498,23 @@ func TestEvalResetAndOnAccumulate(t *testing.T) {
 
 func TestEvalProps(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval(`(set-prop "hits" 0)`); err != nil {
+	if _, err := rt.Eval(`(set-prop 'hits 0)`); err != nil {
 		t.Fatal(err)
 	}
-	v, err := rt.Eval(`(+ (get-prop "hits") 2)`)
+	v, err := rt.Eval(`(+ (get-prop 'hits) 2)`)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("get-prop: %v", v)
 	}
-	if _, err := rt.Eval(`(update-prop "hits" (fn + #1 3))`); err != nil {
+	if _, err := rt.Eval(`(update-prop 'hits (fn + #1 3))`); err != nil {
 		t.Fatal(err)
 	}
 	if !rt.GetProp("hits").Equal(runtime.Int64(3)) {
 		t.Fatalf("update-prop store: %v", rt.GetProp("hits"))
 	}
-	if _, err := rt.Eval(`(set-prop ["a" "b"] 1)`); err != nil {
+	if _, err := rt.Eval(`(set-prop ['a 'b] 1)`); err != nil {
 		t.Fatal(err)
 	}
 	if !rt.GetProp("a", "b").Equal(runtime.Int64(1)) {
@@ -617,7 +625,7 @@ func TestAfterScheduler(t *testing.T) {
 		delays = append(delays, d)
 		pending = append(pending, fn)
 	}))
-	if _, err := rt.Eval(`(after 1 (set-prop "done" true))`); err != nil {
+	if _, err := rt.Eval(`(after 1 (set-prop 'done true))`); err != nil {
 		t.Fatal(err)
 	}
 	if len(delays) != 1 || delays[0] != time.Second {
@@ -651,7 +659,7 @@ func TestMapFilterReduce(t *testing.T) {
 		t.Fatalf("reduce: %v", v)
 	}
 	v = evals(t, `(map [a: 1] (fn first #1))`)
-	if len(v.Items()) != 1 || v.Items()[0].Text() != "a" {
+	if len(v.Items()) != 1 || v.Items()[0].Name() != "a" {
 		t.Fatalf("map map: %v", v)
 	}
 }
