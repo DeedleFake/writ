@@ -1,0 +1,4 @@
+(def (main)
+  (print "hello from writ")
+  (let [lib: (import "lib.writ")]
+    (print ((get lib "double") 21))))

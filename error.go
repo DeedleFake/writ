@@ -1,0 +1,79 @@
+package writ
+
+import "fmt"
+
+// Error is a parse, type, or evaluation error. Start and End are byte
+// offsets into the source when known.
+type Error struct {
+	File    string
+	Start   int
+	End     int
+	Message string
+}
+
+func (e *Error) Error() string {
+	if e == nil {
+		return ""
+	}
+	if e.File != "" {
+		return e.File + ": " + e.Message
+	}
+	return e.Message
+}
+
+func (e *Error) withFile(file string) *Error {
+	if e == nil {
+		return nil
+	}
+	if e.File != "" || file == "" {
+		return e
+	}
+	cp := *e
+	cp.File = file
+	return &cp
+}
+
+func errMsg(msg string) *Error {
+	return &Error{Message: msg}
+}
+
+func errf(format string, args ...any) *Error {
+	return &Error{Message: fmt.Sprintf(format, args...)}
+}
+
+func errAt(start, end int, msg string) *Error {
+	if end < start {
+		end = start
+	}
+	if end == start {
+		end = start + 1
+	}
+	return &Error{Start: start, End: end, Message: msg}
+}
+
+func errAtf(start, end int, format string, args ...any) *Error {
+	e := errAt(start, end, fmt.Sprintf(format, args...))
+	return e
+}
+
+func errVal(v Value, msg string) *Error {
+	s, e := v.span.Start, v.span.End
+	if e == 0 && s == 0 && !v.hasSpan {
+		return errMsg(msg)
+	}
+	return errAt(s, e, msg)
+}
+
+func errValf(v Value, format string, args ...any) *Error {
+	return errVal(v, fmt.Sprintf(format, args...))
+}
+
+func asError(err error) *Error {
+	if err == nil {
+		return nil
+	}
+	if e, ok := err.(*Error); ok {
+		return e
+	}
+	return errMsg(err.Error())
+}

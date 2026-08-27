@@ -1,0 +1,98 @@
+# Writ
+
+Writ is a Lisp embedded in Go. This module is the language library and a CLI.
+
+## Install
+
+```
+go install deedles.dev/writ/cmd/writ@latest
+```
+
+## CLI
+
+```
+writ run FILE.writ
+writ fmt FILE.writ          # formatted source on stdout
+writ fmt -w FILE.writ       # rewrite the file
+writ check FILE.writ        # type-check; non-zero exit on error
+```
+
+`writ run` evaluates top-level forms, then calls `main` if it was defined. The CLI registers `print`, which writes to stdout.
+
+```
+(def (main)
+  (print "hello"))
+```
+
+## Language
+
+Integers are arbitrary-precision. `1` is an integer; `1.0` is a float. `+`, `-`, and `*` stay integers when every operand is an integer. `/` of integers stays an integer when the division is exact; otherwise it is a float. Division by zero is an error.
+
+`true`, `false`, and `nil` are interned symbols. `true` and `false` are booleans; `nil` is not. All three satisfy `symbol?`.
+
+```
+(+ 1 2)
+(def (add a b) (+ a b))
+(let [x: 1 y: 2] (+ x y))
+(if (int? n) (+ n 1) else 0)
+(pipe xs (map (fn * #1 2)) (reduce 0 (fn + #1 #2)))
+```
+
+Lists are `[a b c]`. Maps are `[k: v]` or empty `[:]`. Mixing plain items and `k:` pairs in one `[]` is a parse error.
+
+## Import
+
+`(import "path")` evaluates another script once per runtime and returns a map of that script's top-level `def` and `defm` names.
+
+Relative paths are resolved from the importing file. Search directories can be set on the runtime (`WithSearchPath`) or with `writ run -I DIR` / `writ check -I DIR`.
+
+Resolution order for a path without a known suffix:
+
+1. An in-process package registered with `RegisterPackage`
+2. A `.writ` file under the importing file’s directory and `WithSearchPath` (cwd is used only when there is no importing file and no search path)
+3. A native plugin (`.so` / `.dylib` / `.dll`) only if the host called `WithNativePlugins`
+
+Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbsoluteImports` is set. Untrusted `Eval` should leave plugins off and set an explicit search path. The default unlimited eval budget is not a sandbox.
+
+```
+(let [lib: (import "lib.writ")]
+  ((get lib "double") 21))
+```
+
+## Embed
+
+```go
+rt := writ.New()
+rt.RegisterPrint()
+rt.RegisterPackage("mathx", writ.Package{
+    Funcs: map[string]writ.Func{
+        "double": func(args []writ.Value) (writ.Value, error) {
+            return writ.Int64(args[0].BigInt().Int64() * 2), nil
+        },
+    },
+})
+rt.RegisterEvent("tick", writ.PayloadKey{Name: "n", Type: writ.IntType()})
+rt.RegisterAlias("color", "red", "blue")
+rt.SetScheduler(func(d time.Duration, fn func()) { /* own loop */ })
+
+if _, err := rt.EvalFile("script.writ"); err != nil { ... }
+_ = rt.Fire("tick", map[string]writ.Value{"n": writ.Int64(1)})
+res := rt.Check(src) // diagnostics and type hints
+```
+
+A native plugin exports:
+
+```go
+func WritPackage() writ.Package
+```
+
+Build with `go build -buildmode=plugin`. In-process `RegisterPackage` is the embedding path that works everywhere, including WASM.
+
+## Check and format from Go
+
+```go
+forms, err := writ.Parse(src)
+text, err := writ.Format(src)
+toks := writ.Tokenize(src)
+res := writ.Check(src)
+```
