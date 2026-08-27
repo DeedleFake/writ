@@ -1,8 +1,12 @@
-package writ
+package types
 
 import (
 	"sort"
+	"strconv"
 	"strings"
+
+	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/scanner"
 )
 
 // Diagnostic is a parse or type error.
@@ -19,10 +23,26 @@ type TypeHint struct {
 	Text  string
 }
 
-// CheckResult is the output of [Runtime.Check].
+// CheckResult is the output of Check.
 type CheckResult struct {
 	Diagnostics []Diagnostic
 	Hints       []TypeHint
+	Export      Type
+}
+
+// PayloadKey is one event payload field.
+type PayloadKey struct {
+	Name string
+	Type Type
+}
+
+// Config is host type information for Check.
+type Config struct {
+	Events  map[string][]PayloadKey
+	Aliases []Alias
+	Extra   map[string][]Arrow
+	File    string
+	Import  func(spec, fromFile string) (Type, []Diagnostic, error)
 }
 
 type typeEnv map[string]Type
@@ -43,28 +63,25 @@ type checker struct {
 	fns    map[string]Type
 	pass   int
 	env    typeEnv
-	rt     *Runtime
-	file   string
+	cfg    Config
 }
 
-func newChecker(rt *Runtime) *checker {
+func newChecker(cfg Config) *checker {
 	return &checker{
 		hintAt: map[string]TypeHint{},
 		props:  map[string][]Type{},
 		fns:    map[string]Type{},
 		env:    typeEnv{},
-		rt:     rt,
+		cfg:    cfg,
 	}
 }
 
-func spanOf(v Value) Span {
-	if v.hasSpan {
-		return v.span
-	}
-	return Span{}
+func spanOf(v runtime.Value) runtime.Span {
+	s, _ := v.Span()
+	return s
 }
 
-func (chk *checker) err(v Value, message string) {
+func (chk *checker) err(v runtime.Value, message string) {
 	if chk.pass == 0 {
 		return
 	}
@@ -76,21 +93,15 @@ func (chk *checker) err(v Value, message string) {
 	chk.diags = append(chk.diags, Diagnostic{Start: s.Start, End: end, Message: message})
 }
 
-func (chk *checker) note(v Value, t Type, name string) {
-	if chk.pass == 0 || !v.hasSpan || v.span.End <= v.span.Start {
+func (chk *checker) note(v runtime.Value, t Type, name string) {
+	if chk.pass == 0 || !v.HasSpan() || spanOf(v).End <= spanOf(v).Start {
 		return
 	}
-	text := PrintType(t)
+	text := printType(t, chk.cfg.Aliases)
 	if name != "" {
 		text = name + " : " + text
 	}
-	if chk.rt != nil {
-		text = printType(t, chk.rt.aliases)
-		if name != "" {
-			text = name + " : " + text
-		}
-	}
-	key := itoa(v.span.Start) + ":" + itoa(v.span.End)
+	key := strconv.Itoa(spanOf(v).Start) + ":" + strconv.Itoa(spanOf(v).End)
 	if last, ok := chk.hintAt[key]; ok {
 		last.Text = text
 		chk.hintAt[key] = last
@@ -101,27 +112,27 @@ func (chk *checker) note(v Value, t Type, name string) {
 		}
 		return
 	}
-	h := TypeHint{Start: v.span.Start, End: v.span.End, Text: text}
+	h := TypeHint{Start: spanOf(v).Start, End: spanOf(v).End, Text: text}
 	chk.hintAt[key] = h
 	chk.hints = append(chk.hints, h)
 }
 
-func (chk *checker) noteParams(form Value, env typeEnv) {
-	if form.k != KindList {
+func (chk *checker) noteParams(form runtime.Value, env typeEnv) {
+	if form.Kind() != runtime.KindList {
 		return
 	}
-	for _, p := range form.xs {
-		if p.k == KindSplice && p.innerVal().k == KindSymbol {
-			name := p.innerVal().s
+	for _, p := range form.Items() {
+		if p.Kind() == runtime.KindSplice && p.Inner().Kind() == runtime.KindSymbol {
+			name := p.Inner().Name()
 			if t, ok := env[name]; ok {
-				chk.note(p.innerVal(), t, name)
+				chk.note(p.Inner(), t, name)
 			}
 			continue
 		}
-		if p.k != KindSymbol {
+		if p.Kind() != runtime.KindSymbol {
 			continue
 		}
-		name := p.s
+		name := p.Name()
 		if strings.HasSuffix(name, ":") {
 			name = name[:len(name)-1]
 		}
@@ -131,18 +142,18 @@ func (chk *checker) noteParams(form Value, env typeEnv) {
 	}
 }
 
-func (chk *checker) noteLetKeys(m Value, env typeEnv) {
-	if m.k != KindMap || m.keySpans == nil {
+func (chk *checker) noteLetKeys(m runtime.Value, env typeEnv) {
+	if m.Kind() != runtime.KindMap || m.KeySpans() == nil {
 		return
 	}
-	for k, span := range m.keySpans {
+	for k, span := range m.KeySpans() {
 		if t, ok := env[k]; ok {
-			chk.note(Value{k: KindSymbol, s: k, span: span, hasSpan: true}, t, k)
+			chk.note(runtime.Symbol(k).WithSpan(span.Start, span.End), t, k)
 		}
 	}
 }
 
-func (chk *checker) expect(got, want Type, at Value, ctx string) Type {
+func (chk *checker) expect(got, want Type, at runtime.Value, ctx string) Type {
 	ok := isSubtype(got, want)
 	if got.k == tyDyn {
 		ok = overlaps(got, want)
@@ -151,8 +162,8 @@ func (chk *checker) expect(got, want Type, at Value, ctx string) Type {
 		chk.err(at, ctx+": got "+chk.pt(got)+", need "+chk.pt(want))
 		return tDyn(want)
 	}
-	if at.k == KindSymbol {
-		chk.refine(chk.env, at.s, unwrap(want))
+	if at.Kind() == runtime.KindSymbol {
+		chk.refine(chk.env, at.Name(), unwrap(want))
 	}
 	hit := intersect(unwrap(got), unwrap(want))
 	if got.k == tyDyn {
@@ -162,10 +173,7 @@ func (chk *checker) expect(got, want Type, at Value, ctx string) Type {
 }
 
 func (chk *checker) pt(t Type) string {
-	if chk.rt != nil {
-		return printType(t, chk.rt.aliases)
-	}
-	return printType(t, nil)
+	return printType(t, chk.cfg.Aliases)
 }
 
 func (chk *checker) lookup(env typeEnv, name string) (Type, bool) {
@@ -189,108 +197,108 @@ func (chk *checker) refine(env typeEnv, name string, t Type) {
 	}
 }
 
-func (chk *checker) typeForm(v Value, env typeEnv) Type {
+func (chk *checker) typeForm(v runtime.Value, env typeEnv) Type {
 	prev := chk.env
 	chk.env = env
 	defer func() { chk.env = prev }()
 	t := chk.infer(v, env)
-	if v.k == KindComment {
+	if v.Kind() == runtime.KindComment {
 		return t
 	}
 	name := ""
-	if v.k == KindSymbol {
-		name = v.s
+	if v.Kind() == runtime.KindSymbol {
+		name = v.Name()
 	}
 	chk.note(v, t, name)
 	return t
 }
 
-func (chk *checker) infer(v Value, env typeEnv) Type {
-	switch v.k {
-	case KindComment:
+func (chk *checker) infer(v runtime.Value, env typeEnv) Type {
+	switch v.Kind() {
+	case runtime.KindComment:
 		return NilType()
-	case KindInt:
+	case runtime.KindInt:
 		return IntType()
-	case KindFloat:
+	case runtime.KindFloat:
 		return FloatType()
-	case KindString:
-		return ExactString(v.s)
-	case KindFn:
+	case runtime.KindString:
+		return ExactString(v.Text())
+	case runtime.KindFn:
 		return FnType()
-	case KindQuote:
-		return chk.typeQuote(v.innerVal(), env, 1)
-	case KindUnquote:
+	case runtime.KindQuote:
+		return chk.typeQuote(v.Inner(), env, 1)
+	case runtime.KindUnquote:
 		chk.err(v, "comma not inside quote")
 		return tDyn(Any())
-	case KindSplice:
+	case runtime.KindSplice:
 		chk.err(v, "@ needs a list to insert into")
 		return tDyn(Any())
-	case KindSymbol:
-		if v.s == "true" {
+	case runtime.KindSymbol:
+		if v.Name() == "true" {
 			return TrueType()
 		}
-		if v.s == "false" {
+		if v.Name() == "false" {
 			return FalseType()
 		}
-		if v.s == "nil" {
+		if v.Name() == "nil" {
 			return NilType()
 		}
-		if found, ok := chk.lookup(env, v.s); ok {
+		if found, ok := chk.lookup(env, v.Name()); ok {
 			return found
 		}
-		if isKeyword(v.s) || isBuiltinName(v.s) || chk.hostBuiltin(v.s) {
+		if scanner.IsKeyword(v.Name()) || scanner.IsBuiltin(v.Name()) || chk.hostBuiltin(v.Name()) {
 			return Any()
 		}
-		chk.err(v, "unknown name "+v.s)
+		chk.err(v, "unknown name "+v.Name())
 		return tDyn(Any())
-	case KindMap:
-		if v.mp.len() == 0 {
+	case runtime.KindMap:
+		if len(v.Pairs()) == 0 {
 			return EmptyMapType()
 		}
 		var fields []mapField
-		for i, k := range v.mp.keys {
-			fields = append(fields, mapField{name: k, t: chk.typeForm(v.mp.vals[i], env)})
+		for _, pair := range v.Pairs() {
+			fields = append(fields, mapField{name: pair.Key, t: chk.typeForm(pair.Value, env)})
 		}
-		if v.keySpans != nil {
-			for k, span := range v.keySpans {
+		if v.KeySpans() != nil {
+			for k, span := range v.KeySpans() {
 				for _, f := range fields {
 					if f.name == k {
-						chk.note(Value{k: KindSymbol, s: k, span: span, hasSpan: true}, f.t, k)
+						chk.note(runtime.Symbol(k).WithSpan(span.Start, span.End), f.t, k)
 						break
 					}
 				}
 			}
 		}
 		return tMap(fields, nil)
-	case KindList:
-		if v.vec {
-			types, _ := chk.typeSpread(v.xs, env, v, false)
+	case runtime.KindList:
+		if v.IsVec() {
+			types, _ := chk.typeSpread(v.Items(), env, v, false)
 			if len(types) == 0 {
 				return EmptyList()
 			}
 			return tTuple(types)
 		}
-		xs := filterComments(v.xs)
+		xs := runtime.FilterComments(v.Items())
 		if len(xs) == 0 {
 			return NilType()
 		}
 		head := xs[0]
-		if head.k == KindSplice {
+		if head.Kind() == runtime.KindSplice {
 			types, _ := chk.typeSpread(xs, env, v, false)
 			if len(types) == 0 {
 				return NilType()
 			}
 			return chk.applyFnType(types[0], types[1:], v)
 		}
-		if head.k == KindSymbol {
-			if t, handled := chk.special(head.s, xs[1:], env, v); handled {
+		if head.Kind() == runtime.KindSymbol {
+			if t, handled := chk.special(head.Name(), xs[1:], env, v); handled {
 				return t
 			}
-			if isCoreBuiltin(head.s) {
-				return chk.callBuiltin(head.s, xs[1:], env, v)
+			if scanner.IsCoreBuiltin(head.Name()) {
+				return chk.callBuiltin(head.Name(), xs[1:], env, v)
 			}
-			if chk.hostBuiltin(head.s) {
-				return chk.callHost(head.s, xs[1:], env, v)
+			if chk.hostBuiltin(head.Name()) {
+				return chk.callHost(head.Name(), xs[1:], env, v)
 			}
 		}
 		fnT := chk.typeForm(head, env)
@@ -301,14 +309,11 @@ func (chk *checker) infer(v Value, env typeEnv) Type {
 }
 
 func (chk *checker) hostBuiltin(name string) bool {
-	if chk.rt == nil {
-		return false
-	}
-	_, ok := chk.rt.extra[name]
+	_, ok := chk.cfg.Extra[name]
 	return ok
 }
 
-func (chk *checker) forms(body []Value, env typeEnv) Type {
+func (chk *checker) forms(body []runtime.Value, env typeEnv) Type {
 	last := NilType()
 	for _, a := range body {
 		last = chk.typeForm(a, env)
@@ -316,7 +321,7 @@ func (chk *checker) forms(body []Value, env typeEnv) Type {
 	return last
 }
 
-func (chk *checker) special(name string, args []Value, env typeEnv, form Value) (Type, bool) {
+func (chk *checker) special(name string, args []runtime.Value, env typeEnv, form runtime.Value) (Type, bool) {
 	switch name {
 	case "if":
 		return chk.typeIf(args, env, form), true
@@ -333,7 +338,7 @@ func (chk *checker) special(name string, args []Value, env typeEnv, form Value) 
 		}
 		return tDyn(tOr([]Type{last, FalseType(), NilType()})), true
 	case "not":
-		x := Symbol("nil")
+		x := runtime.Symbol("nil")
 		if len(args) > 0 {
 			x = args[0]
 		}
@@ -359,7 +364,7 @@ func (chk *checker) special(name string, args []Value, env typeEnv, form Value) 
 		chk.typeForm(args[0], env)
 		return tDyn(Any()), true
 	case "after":
-		sec := Symbol("nil")
+		sec := runtime.Symbol("nil")
 		if len(args) > 0 {
 			sec = args[0]
 		}
@@ -376,15 +381,15 @@ func (chk *checker) special(name string, args []Value, env typeEnv, form Value) 
 	}
 }
 
-func (chk *checker) typeImport(args []Value, env typeEnv, form Value) Type {
+func (chk *checker) typeImport(args []runtime.Value, env typeEnv, form runtime.Value) Type {
 	if len(args) != 1 {
 		chk.err(form, "import needs one path")
 		return tDyn(Any())
 	}
 	t := chk.typeForm(args[0], env)
 	u := unwrap(t)
-	if u.k == tyStr && u.has && chk.rt != nil {
-		mt, diags, err := chk.rt.importType(u.s, chk.file)
+	if u.k == tyStr && u.has && chk.cfg.Import != nil {
+		mt, diags, err := chk.cfg.Import(u.s, chk.cfg.File)
 		if chk.pass == 1 {
 			for _, d := range diags {
 				chk.err(args[0], d.Message)
@@ -402,8 +407,8 @@ func (chk *checker) typeImport(args []Value, env typeEnv, form Value) Type {
 	return tDyn(tMap(nil, &anyT))
 }
 
-func (chk *checker) typeIf(args []Value, env typeEnv, form Value) Type {
-	clauses, err := parseIfArgs(args)
+func (chk *checker) typeIf(args []runtime.Value, env typeEnv, form runtime.Value) Type {
+	clauses, err := runtime.ParseIfArgs(args)
 	if err != nil {
 		chk.err(form, err.Error())
 		return tDyn(Any())
@@ -411,16 +416,16 @@ func (chk *checker) typeIf(args []Value, env typeEnv, form Value) Type {
 	var results []Type
 	for _, c := range clauses {
 		child := env.clone()
-		if c.test != nil {
-			chk.typeForm(*c.test, env)
-			chk.narrow(*c.test, c.not, child)
+		if c.Test != nil {
+			chk.typeForm(*c.Test, env)
+			chk.narrow(*c.Test, c.Not, child)
 		}
-		results = append(results, chk.forms(c.body, child))
+		results = append(results, chk.forms(c.Body, child))
 	}
 	return tOr(results)
 }
 
-func (chk *checker) narrow(test Value, not bool, env typeEnv) {
+func (chk *checker) narrow(test runtime.Value, not bool, env typeEnv) {
 	apply := func(name string, whenTrue, whenFalse Type) {
 		if _, ok := env[name]; !ok {
 			return
@@ -431,27 +436,27 @@ func (chk *checker) narrow(test Value, not bool, env typeEnv) {
 			env[name] = whenTrue
 		}
 	}
-	if test.k == KindSymbol {
-		cur, ok := env[test.s]
+	if test.Kind() == runtime.KindSymbol {
+		cur, ok := env[test.Name()]
 		if !ok {
 			return
 		}
-		apply(test.s, withoutFalsy(cur), onlyFalsy(cur))
+		apply(test.Name(), withoutFalsy(cur), onlyFalsy(cur))
 		return
 	}
-	if test.k != KindList || test.vec {
+	if test.Kind() != runtime.KindList || test.IsVec() {
 		return
 	}
-	xs := filterComments(test.xs)
-	if len(xs) < 2 || xs[0].k != KindSymbol || xs[1].k != KindSymbol {
+	xs := runtime.FilterComments(test.Items())
+	if len(xs) < 2 || xs[0].Kind() != runtime.KindSymbol || xs[1].Kind() != runtime.KindSymbol {
 		return
 	}
-	cur, ok := env[xs[1].s]
+	cur, ok := env[xs[1].Name()]
 	if !ok {
 		return
 	}
 	var want Type
-	switch xs[0].s {
+	switch xs[0].Name() {
 	case "str?":
 		want = stringyType()
 	case "num?":
@@ -477,10 +482,10 @@ func (chk *checker) narrow(test Value, not bool, env typeEnv) {
 	if isNone(yes) {
 		yes = cur
 	}
-	apply(xs[1].s, yes, cur)
+	apply(xs[1].Name(), yes, cur)
 }
 
-func (chk *checker) typeLet(args []Value, env typeEnv, form Value) Type {
+func (chk *checker) typeLet(args []runtime.Value, env typeEnv, form runtime.Value) Type {
 	if len(args) == 0 {
 		chk.err(form, "let needs a map")
 		return NilType()
@@ -551,48 +556,48 @@ func (chk *checker) typeLet(args []Value, env typeEnv, form Value) Type {
 	return ret
 }
 
-func (chk *checker) typeQuote(v Value, env typeEnv, depth int) Type {
-	switch v.k {
-	case KindUnquote:
+func (chk *checker) typeQuote(v runtime.Value, env typeEnv, depth int) Type {
+	switch v.Kind() {
+	case runtime.KindUnquote:
 		if depth == 1 {
-			return chk.typeForm(v.innerVal(), env)
+			return chk.typeForm(v.Inner(), env)
 		}
-		return chk.typeQuote(v.innerVal(), env, depth-1)
-	case KindQuote:
-		return chk.typeQuote(v.innerVal(), env, depth+1)
-	case KindSplice:
+		return chk.typeQuote(v.Inner(), env, depth-1)
+	case runtime.KindQuote:
+		return chk.typeQuote(v.Inner(), env, depth+1)
+	case runtime.KindSplice:
 		if depth != 1 {
 			return Any()
 		}
-		inner := chk.typeForm(v.innerVal(), env)
+		inner := chk.typeForm(v.Inner(), env)
 		chk.expectListish(inner, v)
 		return inner
-	case KindList:
+	case runtime.KindList:
 		if depth != 1 {
 			return kindOf(v)
 		}
-		types, _ := chk.typeSpread(v.xs, env, v, true)
+		types, _ := chk.typeSpread(v.Items(), env, v, true)
 		if len(types) == 0 {
 			return EmptyList()
 		}
 		return tTuple(types)
-	case KindMap:
-		if v.mp.len() == 0 {
+	case runtime.KindMap:
+		if len(v.Pairs()) == 0 {
 			return EmptyMapType()
 		}
 		var fields []mapField
-		for i, k := range v.mp.keys {
-			fields = append(fields, mapField{name: k, t: chk.typeQuote(v.mp.vals[i], env, depth)})
+		for _, pair := range v.Pairs() {
+			fields = append(fields, mapField{name: pair.Key, t: chk.typeQuote(pair.Value, env, depth)})
 		}
 		return tMap(fields, nil)
-	case KindSymbol:
-		return ExactSymbol(v.s)
+	case runtime.KindSymbol:
+		return ExactSymbol(v.Name())
 	default:
 		return kindOf(v)
 	}
 }
 
-func (chk *checker) expectListish(t Type, at Value) {
+func (chk *checker) expectListish(t Type, at runtime.Value) {
 	u := unwrap(t)
 	if u.k == tyList || u.k == tyTuple || u.k == tyEmptyList || u.k == tyAny || t.k == tyDyn {
 		if t.k == tyDyn && u.k != tyList && u.k != tyTuple && u.k != tyEmptyList && u.k != tyAny {
@@ -603,23 +608,23 @@ func (chk *checker) expectListish(t Type, at Value) {
 	chk.expect(t, tOr([]Type{EmptyList(), tList(Any())}), at, "@")
 }
 
-func (chk *checker) typeSpread(items []Value, env typeEnv, at Value, quoteSplice bool) ([]Type, bool) {
+func (chk *checker) typeSpread(items []runtime.Value, env typeEnv, at runtime.Value, quoteSplice bool) ([]Type, bool) {
 	var types []Type
 	open := false
 	for _, a := range items {
-		if a.k == KindComment {
+		if a.Kind() == runtime.KindComment {
 			continue
 		}
-		if a.k == KindSplice {
+		if a.Kind() == runtime.KindSplice {
 			var inner Type
 			if quoteSplice {
-				if a.innerVal().k == KindUnquote {
-					inner = chk.typeForm(a.innerVal().innerVal(), env)
+				if a.Inner().Kind() == runtime.KindUnquote {
+					inner = chk.typeForm(a.Inner().Inner(), env)
 				} else {
-					inner = chk.typeForm(a.innerVal(), env)
+					inner = chk.typeForm(a.Inner(), env)
 				}
 			} else {
-				inner = chk.typeForm(a.innerVal(), env)
+				inner = chk.typeForm(a.Inner(), env)
 			}
 			chk.expectListish(inner, a)
 			u := unwrap(inner)
@@ -647,29 +652,29 @@ func (chk *checker) typeSpread(items []Value, env typeEnv, at Value, quoteSplice
 type typedCall struct {
 	pos    []Type
 	keys   map[string]Type
-	rawPos []Value
+	rawPos []runtime.Value
 	keyRaw []struct {
 		name string
-		raw  Value
+		raw  runtime.Value
 	}
 	open bool
 }
 
-func (chk *checker) typeCallParts(raw []Value, env typeEnv, form Value) typedCall {
+func (chk *checker) typeCallParts(raw []runtime.Value, env typeEnv, form runtime.Value) typedCall {
 	out := typedCall{keys: map[string]Type{}}
 	keyed := false
 	for i := 0; i < len(raw); {
 		a := raw[i]
-		if a.k == KindComment {
+		if a.Kind() == runtime.KindComment {
 			i++
 			continue
 		}
-		if a.k == KindSplice {
+		if a.Kind() == runtime.KindSplice {
 			if keyed {
 				chk.err(a, "positional argument after key:")
 				break
 			}
-			types, more := chk.typeSpread([]Value{a}, env, form, false)
+			types, more := chk.typeSpread([]runtime.Value{a}, env, form, false)
 			out.pos = append(out.pos, types...)
 			for range types {
 				out.rawPos = append(out.rawPos, a)
@@ -678,18 +683,18 @@ func (chk *checker) typeCallParts(raw []Value, env typeEnv, form Value) typedCal
 			i++
 			continue
 		}
-		if a.isKeySym() {
+		if a.IsKey() {
 			keyed = true
-			name := a.keyName()
+			name := a.KeyName()
 			if i+1 >= len(raw) {
-				chk.err(a, "missing value for "+a.s)
+				chk.err(a, "missing value for "+a.Name())
 				break
 			}
 			val := raw[i+1]
 			out.keys[name] = chk.typeForm(val, env)
 			out.keyRaw = append(out.keyRaw, struct {
 				name string
-				raw  Value
+				raw  runtime.Value
 			}{name, val})
 			i += 2
 			continue
@@ -705,44 +710,44 @@ func (chk *checker) typeCallParts(raw []Value, env typeEnv, form Value) typedCal
 	return out
 }
 
-func (chk *checker) typeFn(args []Value, env typeEnv, form Value) Type {
-	parsed, err := parseFn(args)
+func (chk *checker) typeFn(args []runtime.Value, env typeEnv, form runtime.Value) Type {
+	_, clauses, err := runtime.ParseFn(args)
 	if err != nil {
 		chk.err(form, err.Error())
 		return tDyn(Any())
 	}
-	arrows := make([]Arrow, len(parsed.clauses))
-	for i, c := range parsed.clauses {
-		var pf Value
+	arrows := make([]Arrow, len(clauses))
+	for i, c := range clauses {
+		var pf runtime.Value
 		if c.ParamsForm != nil {
 			pf = *c.ParamsForm
 		}
-		arrows[i] = chk.typeClause(c.params, c.Body, env, pf)
+		arrows[i] = chk.typeClause(c.Params, c.Body, env, pf)
 	}
 	return FnType(arrows...)
 }
 
-func (chk *checker) typePipe(args []Value, env typeEnv, form Value) Type {
-	steps := filterComments(args)
+func (chk *checker) typePipe(args []runtime.Value, env typeEnv, form runtime.Value) Type {
+	steps := runtime.FilterComments(args)
 	if len(steps) < 2 {
 		chk.err(form, "pipe needs a value and at least one step")
 		return tDyn(Any())
 	}
 	cur := chk.typeForm(steps[0], env)
 	for _, step := range steps[1:] {
-		if step.k == KindSymbol {
-			if fnT, ok := chk.lookup(env, step.s); ok {
-				chk.note(step, fnT, step.s)
+		if step.Kind() == runtime.KindSymbol {
+			if fnT, ok := chk.lookup(env, step.Name()); ok {
+				chk.note(step, fnT, step.Name())
 			}
-			cur = chk.applyTypeToCall(step.s, []Type{cur}, map[string]Type{}, step, env)
+			cur = chk.applyTypeToCall(step.Name(), []Type{cur}, map[string]Type{}, step, env)
 			continue
 		}
-		if step.k != KindList || step.vec {
+		if step.Kind() != runtime.KindList || step.IsVec() {
 			chk.err(step, "pipe step must be a call or a name")
 			continue
 		}
-		xs := filterComments(step.xs)
-		if len(xs) == 0 || xs[0].k != KindSymbol {
+		xs := runtime.FilterComments(step.Items())
+		if len(xs) == 0 || xs[0].Kind() != runtime.KindSymbol {
 			chk.err(step, "pipe step must be a call or a name")
 			continue
 		}
@@ -751,12 +756,12 @@ func (chk *checker) typePipe(args []Value, env typeEnv, form Value) Type {
 			rest[i] = chk.typeForm(a, env)
 		}
 		pos := append([]Type{cur}, rest...)
-		cur = chk.applyTypeToCall(xs[0].s, pos, map[string]Type{}, step, env)
+		cur = chk.applyTypeToCall(xs[0].Name(), pos, map[string]Type{}, step, env)
 	}
 	return cur
 }
 
-func (chk *checker) bindParams(params params, env typeEnv) {
+func (chk *checker) bindParams(params runtime.Params, env typeEnv) {
 	if !params.Key {
 		for _, p := range params.Pats {
 			if p.Bind {
@@ -780,7 +785,7 @@ func (chk *checker) bindParams(params params, env typeEnv) {
 	}
 }
 
-func (chk *checker) promoteBinds(params params, env typeEnv) {
+func (chk *checker) promoteBinds(params runtime.Params, env typeEnv) {
 	bump := func(name string) {
 		if t, ok := env[name]; ok {
 			env[name] = fromUsage(t)
@@ -807,7 +812,7 @@ func (chk *checker) promoteBinds(params params, env typeEnv) {
 	}
 }
 
-func (chk *checker) typeClause(params params, body []Value, parent typeEnv, paramsForm Value) Arrow {
+func (chk *checker) typeClause(params runtime.Params, body []runtime.Value, parent typeEnv, paramsForm runtime.Value) Arrow {
 	e := parent.clone()
 	chk.bindParams(params, e)
 	saved := chk.pass
@@ -820,7 +825,7 @@ func (chk *checker) typeClause(params params, body []Value, parent typeEnv, para
 	return chk.arrowFrom(params, e, ret)
 }
 
-func (chk *checker) arrowFrom(params params, env typeEnv, ret Type) Arrow {
+func (chk *checker) arrowFrom(params runtime.Params, env typeEnv, ret Type) Arrow {
 	if !params.Key {
 		args := make([]Type, len(params.Pats))
 		for i, p := range params.Pats {
@@ -849,7 +854,7 @@ func (chk *checker) arrowFrom(params params, env typeEnv, ret Type) Arrow {
 	return Arrow{Key: true, Keys: keys, Result: ret}
 }
 
-func (chk *checker) apply(fnT Type, raw []Value, env typeEnv, form Value) Type {
+func (chk *checker) apply(fnT Type, raw []runtime.Value, env typeEnv, form runtime.Value) Type {
 	parts := chk.typeCallParts(raw, env, form)
 	inner := unwrap(fnT)
 	if fnT.k == tyDyn {
@@ -872,7 +877,7 @@ func (chk *checker) apply(fnT Type, raw []Value, env typeEnv, form Value) Type {
 	return ret
 }
 
-func (chk *checker) applyFnType(fnT Type, pos []Type, form Value) Type {
+func (chk *checker) applyFnType(fnT Type, pos []Type, form runtime.Value) Type {
 	if fnT.k == tyDyn {
 		return tDyn(Any())
 	}
@@ -887,7 +892,7 @@ func (chk *checker) applyFnType(fnT Type, pos []Type, form Value) Type {
 	return chk.applyArrows(inner.arrows, pos, map[string]Type{}, form)
 }
 
-func (chk *checker) applyArrows(arrows []Arrow, pos []Type, keys map[string]Type, form Value) Type {
+func (chk *checker) applyArrows(arrows []Arrow, pos []Type, keys map[string]Type, form runtime.Value) Type {
 	var rets []Type
 	for _, ar := range arrows {
 		if !ar.Key {
@@ -964,9 +969,9 @@ func (chk *checker) applyArrows(arrows []Arrow, pos []Type, keys map[string]Type
 	return u
 }
 
-func (chk *checker) refineCall(arrows []Arrow, posRaw []Value, keyRaw []struct {
+func (chk *checker) refineCall(arrows []Arrow, posRaw []runtime.Value, keyRaw []struct {
 	name string
-	raw  Value
+	raw  runtime.Value
 }, env typeEnv) {
 	var posAr []Arrow
 	for _, a := range arrows {
@@ -978,7 +983,7 @@ func (chk *checker) refineCall(arrows []Arrow, posRaw []Value, keyRaw []struct {
 		}
 	}
 	for i, arg := range posRaw {
-		if arg.k != KindSymbol {
+		if arg.Kind() != runtime.KindSymbol {
 			continue
 		}
 		var wants []Type
@@ -1000,7 +1005,7 @@ func (chk *checker) refineCall(arrows []Arrow, posRaw []Value, keyRaw []struct {
 		for i, t := range wants {
 			un[i] = unwrap(t)
 		}
-		chk.refine(env, arg.s, tOr(un))
+		chk.refine(env, arg.Name(), tOr(un))
 	}
 	if len(posRaw) > 0 {
 		return
@@ -1012,7 +1017,7 @@ func (chk *checker) refineCall(arrows []Arrow, posRaw []Value, keyRaw []struct {
 		}
 	}
 	for _, kr := range keyRaw {
-		if kr.raw.k != KindSymbol {
+		if kr.raw.Kind() != runtime.KindSymbol {
 			continue
 		}
 		var wants []Type
@@ -1036,12 +1041,12 @@ func (chk *checker) refineCall(arrows []Arrow, posRaw []Value, keyRaw []struct {
 		for i, t := range wants {
 			un[i] = unwrap(t)
 		}
-		chk.refine(env, kr.raw.s, tOr(un))
+		chk.refine(env, kr.raw.Name(), tOr(un))
 	}
 }
 
-func (chk *checker) applyTypeToCall(name string, pos []Type, keys map[string]Type, at Value, env typeEnv) Type {
-	if isCoreBuiltin(name) {
+func (chk *checker) applyTypeToCall(name string, pos []Type, keys map[string]Type, at runtime.Value, env typeEnv) Type {
+	if scanner.IsCoreBuiltin(name) {
 		return chk.callBuiltinTyped(name, pos, at, env, nil)
 	}
 	if chk.hostBuiltin(name) {
@@ -1060,7 +1065,7 @@ func (chk *checker) applyTypeToCall(name string, pos []Type, keys map[string]Typ
 	return chk.applyArrows(inner.arrows, pos, keys, at)
 }
 
-func (chk *checker) callBuiltin(name string, raw []Value, env typeEnv, form Value) Type {
+func (chk *checker) callBuiltin(name string, raw []runtime.Value, env typeEnv, form runtime.Value) Type {
 	parts := chk.typeCallParts(raw, env, form)
 	if len(parts.keys) > 0 {
 		chk.err(form, name+" does not take keyword arguments")
@@ -1068,28 +1073,28 @@ func (chk *checker) callBuiltin(name string, raw []Value, env typeEnv, form Valu
 	return chk.callBuiltinTyped(name, parts.pos, form, env, parts.rawPos)
 }
 
-func (chk *checker) callHost(name string, raw []Value, env typeEnv, form Value) Type {
+func (chk *checker) callHost(name string, raw []runtime.Value, env typeEnv, form runtime.Value) Type {
 	parts := chk.typeCallParts(raw, env, form)
 	return chk.callHostTyped(name, parts.pos, parts.keys, form)
 }
 
-func (chk *checker) callHostTyped(name string, pos []Type, keys map[string]Type, form Value) Type {
-	b := chk.rt.extra[name]
-	if len(b.arrows) == 0 {
+func (chk *checker) callHostTyped(name string, pos []Type, keys map[string]Type, form runtime.Value) Type {
+	b := chk.cfg.Extra[name]
+	if len(b) == 0 {
 		return tDyn(Any())
 	}
-	return chk.applyArrows(b.arrows, pos, keys, form)
+	return chk.applyArrows(b, pos, keys, form)
 }
 
-func (chk *checker) expectNum(pos []Type, raw []Value, form Value, name string) {
+func (chk *checker) expectNum(pos []Type, raw []runtime.Value, form runtime.Value, name string) {
 	for i, p := range pos {
 		at := form
 		if i < len(raw) {
 			at = raw[i]
 		}
 		chk.expect(p, numType(), at, name)
-		if at.k == KindSymbol {
-			chk.refine(chk.env, at.s, unwrap(numType()))
+		if at.Kind() == runtime.KindSymbol {
+			chk.refine(chk.env, at.Name(), unwrap(numType()))
 		}
 	}
 }
@@ -1115,8 +1120,8 @@ func (chk *checker) arithResult(pos []Type) Type {
 	return numType()
 }
 
-func (chk *checker) callBuiltinTyped(name string, pos []Type, form Value, env typeEnv, raw []Value) Type {
-	at := func(i int) Value {
+func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value, env typeEnv, raw []runtime.Value) Type {
+	at := func(i int) runtime.Value {
 		if i < len(raw) {
 			return raw[i]
 		}
@@ -1165,8 +1170,8 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form Value, env ty
 			arg = pos[0]
 		}
 		chk.expect(arg, numType(), at(0), name)
-		if at(0).k == KindSymbol {
-			chk.refine(env, at(0).s, unwrap(numType()))
+		if at(0).Kind() == runtime.KindSymbol {
+			chk.refine(env, at(0).Name(), unwrap(numType()))
 		}
 		u := unwrap(arg)
 		if isSubtype(u, IntType()) {
@@ -1188,11 +1193,11 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form Value, env ty
 		}
 		chk.expect(a, numType(), at(0), name)
 		chk.expect(b, numType(), at(1), name)
-		if at(0).k == KindSymbol {
-			chk.refine(env, at(0).s, unwrap(numType()))
+		if at(0).Kind() == runtime.KindSymbol {
+			chk.refine(env, at(0).Name(), unwrap(numType()))
 		}
-		if at(1).k == KindSymbol {
-			chk.refine(env, at(1).s, unwrap(numType()))
+		if at(1).Kind() == runtime.KindSymbol {
+			chk.refine(env, at(1).Name(), unwrap(numType()))
 		}
 		return BoolType()
 	case "str":
@@ -1516,14 +1521,14 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form Value, env ty
 	}
 }
 
-func (chk *checker) typePred(name string, got Type, at Value, env typeEnv) {
-	if at.k == KindSymbol && got.k != 0 {
-		chk.refine(env, at.s, Any())
+func (chk *checker) typePred(name string, got Type, at runtime.Value, env typeEnv) {
+	if at.Kind() == runtime.KindSymbol && got.k != 0 {
+		chk.refine(env, at.Name(), Any())
 	}
 }
 
-func (chk *checker) typeUpdateProp(pos []Type, form Value, raw []Value) Type {
-	at := func(i int) Value {
+func (chk *checker) typeUpdateProp(pos []Type, form runtime.Value, raw []runtime.Value) Type {
+	at := func(i int) runtime.Value {
 		if i < len(raw) {
 			return raw[i]
 		}
@@ -1591,89 +1596,62 @@ func mergeDiags(diags []Diagnostic) []Diagnostic {
 	return out
 }
 
-func (rt *Runtime) checkSrc(src, file string) CheckResult {
-	if strings.TrimSpace(src) == "" {
+// Check type-checks already-expanded forms and a compiled program.
+func Check(forms []runtime.Value, prog runtime.Program, cfg Config) CheckResult {
+	if len(forms) == 0 && len(prog.Boot) == 0 && len(prog.Fns) == 0 && len(prog.Handlers) == 0 && len(prog.Macros) == 0 {
 		return CheckResult{}
 	}
-	if rt != nil && file != "" {
-		for _, p := range rt.checkLoading {
-			if p == file {
-				return CheckResult{Diagnostics: []Diagnostic{{Message: "import cycle: " + file}}}
-			}
-		}
-		rt.checkLoading = append(rt.checkLoading, file)
-		defer func() { rt.checkLoading = rt.checkLoading[:len(rt.checkLoading)-1] }()
-	}
-	parsed, err := Parse(src)
-	if err != nil {
-		e := asError(err)
-		end := e.End
-		if end == 0 {
-			end = e.Start + 1
-		}
-		return CheckResult{Diagnostics: []Diagnostic{{Start: e.Start, End: end, Message: e.Message}}}
-	}
-	prog, err := compileForms(parsed, rt)
-	if err != nil {
-		e := asError(err)
-		end := e.End
-		if end <= e.Start {
-			end = e.Start + 1
-		}
-		return CheckResult{Diagnostics: []Diagnostic{{Start: e.Start, End: end, Message: e.Message}}}
-	}
-	chk := newChecker(rt)
-	chk.file = file
+	chk := newChecker(cfg)
 	env := typeEnv{}
 
 	type fnForm struct {
 		name       string
-		nameForm   Value
-		params     params
-		body       []Value
-		paramsForm Value
+		nameForm   runtime.Value
+		params     runtime.Params
+		body       []runtime.Value
+		paramsForm runtime.Value
 	}
 	var fnForms []fnForm
 	type onForm struct {
 		event      string
-		form       Value
-		params     params
-		body       []Value
-		paramsForm Value
+		form       runtime.Value
+		params     runtime.Params
+		body       []runtime.Value
+		paramsForm runtime.Value
 	}
 	var onForms []onForm
-	boot := append([]Value{}, prog.Boot...)
+	boot := append([]runtime.Value{}, prog.Boot...)
 
 	for _, f := range prog.Fns {
 		for _, c := range f.Clauses {
-			pf := Value{k: KindList}
+			pf := runtime.CallList()
 			if c.ParamsForm != nil {
 				pf = *c.ParamsForm
 			}
 			fnForms = append(fnForms, fnForm{
-				name: f.Name, nameForm: f.NameForm, params: c.params, body: c.Body, paramsForm: pf,
+				name: f.Name, nameForm: f.NameForm, params: c.Params, body: c.Body, paramsForm: pf,
 			})
 		}
 	}
 	for _, h := range prog.Handlers {
 		for _, c := range h.Clauses {
-			pf := Symbol(h.Event)
+			pf := runtime.Symbol(h.Event)
 			if c.ParamsForm != nil {
 				pf = *c.ParamsForm
 			}
 			onForms = append(onForms, onForm{
-				event: h.Event, form: pf, params: c.params, body: c.Body, paramsForm: pf,
+				event: h.Event, form: pf, params: c.Params, body: c.Body, paramsForm: pf,
 			})
 		}
 	}
 
 	chk.pass = 1
-	for _, form := range parsed {
-		if form.k == KindComment {
+	for _, form := range forms {
+		if form.Kind() == runtime.KindComment {
 			continue
 		}
-		if form.k == KindList && len(form.xs) > 0 && isSymName(form.xs[0], "defm") {
-			d, ok, err := asDefForm(form, "defm")
+		if form.Kind() == runtime.KindList && len(form.Items()) > 0 && runtime.IsName(form.Items()[0], "defm") {
+			d, ok, err := runtime.AsDefForm(form, "defm")
 			if err != nil {
 				chk.err(form, err.Error())
 				continue
@@ -1681,8 +1659,8 @@ func (rt *Runtime) checkSrc(src, file string) CheckResult {
 			if !ok {
 				continue
 			}
-			chk.typeClause(d.params, d.Body, env, d.ParamsForm)
-			if d.NameForm.hasSpan {
+			chk.typeClause(d.Params, d.Body, env, d.ParamsForm)
+			if d.NameForm.HasSpan() {
 				chk.note(d.NameForm, tDyn(Any()), d.Name)
 			}
 		}
@@ -1725,8 +1703,8 @@ func (rt *Runtime) checkSrc(src, file string) CheckResult {
 			}
 		}
 		for _, o := range onForms {
-			if chk.rt != nil && len(chk.rt.events) > 0 {
-				if _, ok := chk.rt.events[o.event]; !ok {
+			if len(chk.cfg.Events) > 0 {
+				if _, ok := chk.cfg.Events[o.event]; !ok {
 					chk.err(o.form, "unknown event "+o.event)
 				}
 			}
@@ -1742,25 +1720,10 @@ func (rt *Runtime) checkSrc(src, file string) CheckResult {
 	chk.pass = 1
 	runBodies()
 	diags := mergeDiags(chk.diags)
-	if rt != nil && file != "" {
-		cycle := false
-		for _, d := range diags {
-			if strings.Contains(d.Message, "cycle") {
-				cycle = true
-				break
-			}
-		}
-		if !cycle {
-			if rt.exportCache == nil {
-				rt.exportCache = map[string]cachedExport{}
-			}
-			rt.exportCache[file] = cachedExport{t: exportCheckedType(prog, chk), diags: diags}
-		}
-	}
-	return CheckResult{Diagnostics: diags, Hints: chk.hints}
+	return CheckResult{Diagnostics: diags, Hints: chk.hints, Export: exportCheckedType(prog, chk)}
 }
 
-func exportCheckedType(prog program, chk *checker) Type {
+func exportCheckedType(prog runtime.Program, chk *checker) Type {
 	seen := map[string]struct{}{}
 	var names []string
 	types := map[string]Type{}
@@ -1795,11 +1758,8 @@ func exportCheckedType(prog program, chk *checker) Type {
 	return tMap(fields, nil)
 }
 
-func (chk *checker) bindEvent(event string, params params, env typeEnv) {
-	if chk.rt == nil {
-		return
-	}
-	spec, ok := chk.rt.events[event]
+func (chk *checker) bindEvent(event string, params runtime.Params, env typeEnv) {
+	spec, ok := chk.cfg.Events[event]
 	if !ok {
 		return
 	}
@@ -1826,12 +1786,4 @@ func (chk *checker) bindEvent(event string, params params, env typeEnv) {
 		}
 		env[p.Name] = spec[i].Type
 	}
-}
-
-// Check type-checks src with a fresh runtime. print is registered so
-// scripts that use it type-check the same way as `writ check`.
-func Check(src string) CheckResult {
-	rt := New()
-	rt.RegisterPrint()
-	return rt.Check(src)
 }

@@ -1,12 +1,14 @@
-package writ
+package runtime
 
 import (
 	"time"
+
+	"deedles.dev/writ/scanner"
 )
 
 type ctx struct {
-	rt       *Runtime
-	macros   map[string][]clause
+	rt       *Machine
+	macros   map[string][]Clause
 	macroEnv *env
 	file     string
 	depth    int
@@ -14,13 +16,13 @@ type ctx struct {
 
 const maxEvalDepth = 8000
 
-func newCtx(rt *Runtime, env *env, macros map[string][]clause) *ctx {
+func newCtx(rt *Machine, env *env, macros map[string][]Clause) *ctx {
 	file := ""
 	if rt != nil {
 		file = rt.file
 	}
 	if macros == nil {
-		macros = map[string][]clause{}
+		macros = map[string][]Clause{}
 	}
 	return &ctx{rt: rt, macros: macros, macroEnv: env, file: file}
 }
@@ -175,7 +177,7 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 				}
 				return evalVal(ex, env, c)
 			}
-			if isCoreBuiltin(head.s) {
+			if scanner.IsCoreBuiltin(head.s) {
 				call, err := evalCallRaw(xs[1:], env, c)
 				if err != nil {
 					return Value{}, err
@@ -191,7 +193,7 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 					if len(call.keys) > 0 {
 						return Value{}, errf("%s does not take keyword arguments", head.s)
 					}
-					return c.rt.hostCall(func() (Value, error) { return b.call(call.pos) })
+					return c.rt.hostCall(func() (Value, error) { return b(call.pos) })
 				}
 			}
 		}
@@ -353,13 +355,13 @@ func special(name string, args []Value, env *env, c *ctx) (Value, bool, error) {
 			return Value{}, true, err
 		}
 		for _, cl := range clauses {
-			pass := cl.test == nil
+			pass := cl.Test == nil
 			if !pass {
-				tv, err := evalVal(*cl.test, env, c)
+				tv, err := evalVal(*cl.Test, env, c)
 				if err != nil {
 					return Value{}, true, err
 				}
-				if cl.not {
+				if cl.Not {
 					pass = !tv.Truthy()
 				} else {
 					pass = tv.Truthy()
@@ -367,7 +369,7 @@ func special(name string, args []Value, env *env, c *ctx) (Value, bool, error) {
 			}
 			if pass {
 				last := Nil
-				for _, a := range cl.body {
+				for _, a := range cl.Body {
 					var err error
 					last, err = evalVal(a, env, c)
 					if err != nil {
@@ -503,9 +505,9 @@ func makeFn(args []Value, env *env) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	clauses := make([]clause, len(parsed.clauses))
+	clauses := make([]Clause, len(parsed.clauses))
 	for i, cl := range parsed.clauses {
-		clauses[i] = clause{params: cl.params, Body: cl.Body}
+		clauses[i] = Clause{Params: cl.Params, Body: cl.Body}
 	}
 	return makeFnVal(clauses, env), nil
 }
@@ -610,7 +612,7 @@ func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
 		}
 		allPos, allKey := true, true
 		for _, cl := range f.clauses {
-			if cl.params.Key {
+			if cl.Params.Key {
 				allPos = false
 			} else {
 				allKey = false
@@ -624,7 +626,7 @@ func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
 		}
 		for _, clause := range f.clauses {
 			child := makeEnv(f.env)
-			if !tryBind(clause.params, call, child) {
+			if !tryBind(clause.Params, call, child) {
 				continue
 			}
 			last := Nil
@@ -645,7 +647,7 @@ func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
 	return Value{}, errMsg("not a function")
 }
 
-func bindPat(pat pattern, val Value, env *env) bool {
+func bindPat(pat Pattern, val Value, env *env) bool {
 	if !pat.Bind {
 		return pat.Value.Equal(val)
 	}
@@ -653,7 +655,7 @@ func bindPat(pat pattern, val Value, env *env) bool {
 	return true
 }
 
-func tryBind(params params, call callParts, env *env) bool {
+func tryBind(params Params, call callParts, env *env) bool {
 	if !params.Key {
 		if len(call.keys) > 0 {
 			return false

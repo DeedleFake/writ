@@ -1,4 +1,4 @@
-package writ
+package runtime
 
 import "fmt"
 
@@ -77,3 +77,18 @@ func asError(err error) *Error {
 	}
 	return errMsg(err.Error())
 }
+
+// ErrorMsg builds an error with no source span.
+func ErrorMsg(msg string) *Error { return errMsg(msg) }
+
+// Errorf builds a formatted error with no source span.
+func Errorf(format string, args ...any) *Error { return errf(format, args...) }
+
+// ErrorAt builds an error covering a byte range.
+func ErrorAt(start, end int, msg string) *Error { return errAt(start, end, msg) }
+
+// AsError converts err to *Error.
+func AsError(err error) *Error { return asError(err) }
+
+// WithFile sets File when it is empty.
+func (e *Error) WithFile(file string) *Error { return e.withFile(file) }

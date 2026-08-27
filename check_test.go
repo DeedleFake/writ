@@ -1,6 +1,8 @@
 package writ
 
 import (
+	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -97,7 +99,7 @@ func TestCheckHints(t *testing.T) {
 
 func TestCheckHostEvent(t *testing.T) {
 	rt := New()
-	rt.RegisterEvent("tick", PayloadKey{Name: "n", Type: IntType()})
+	rt.RegisterEvent("tick", types.PayloadKey{Name: "n", Type: types.IntType()})
 	res := rt.Check(`
 (on tick (n)
   (+ n 1))
@@ -147,9 +149,9 @@ func TestCheckHostAlias(t *testing.T) {
 	if !ok {
 		t.Fatal("alias")
 	}
-	if err := rt.RegisterBuiltin("paint", func(args []Value) (Value, error) {
-		return Nil, nil
-	}, PosArrow(NilType(), ct)); err != nil {
+	if err := rt.RegisterBuiltin("paint", func(args []runtime.Value) (runtime.Value, error) {
+		return runtime.Nil, nil
+	}, types.PosArrow(types.NilType(), ct)); err != nil {
 		t.Fatal(err)
 	}
 	res := rt.Check(`(paint "red")`)
@@ -247,7 +249,7 @@ func TestCheckFileImportUsesScriptDir(t *testing.T) {
 	t.Chdir(root)
 	rt := New()
 	res := rt.CheckFile(evil)
-	if rt.GetProp("leaked").Equal(Int64(1)) {
+	if rt.GetProp("leaked").Equal(runtime.Int64(1)) {
 		t.Fatalf("CheckFile imported cwd file: diags=%v", res.Diagnostics)
 	}
 	if _, err := New().EvalFile(evil); err == nil {

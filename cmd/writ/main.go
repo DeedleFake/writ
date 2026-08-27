@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 
 	"deedles.dev/writ"
+	"deedles.dev/writ/parser"
+	"deedles.dev/writ/runtime"
 )
 
 func main() {
@@ -68,7 +70,7 @@ func cmdRun(args []string) error {
 	if _, err := rt.EvalFile(file); err != nil {
 		return err
 	}
-	if mainFn, ok := rt.Lookup("main"); ok && mainFn.Kind() == writ.KindFn {
+	if mainFn, ok := rt.Lookup("main"); ok && mainFn.Kind() == runtime.KindFn {
 		_, err := rt.Apply(mainFn, nil)
 		return err
 	}
@@ -96,7 +98,7 @@ func cmdFmt(args []string) error {
 	if err != nil {
 		return err
 	}
-	text, err := writ.Format(string(data))
+	text, err := parser.Format(string(data))
 	if err != nil {
 		return err
 	}

@@ -1,4 +1,4 @@
-package writ
+package runtime
 
 import (
 	"math"
@@ -730,7 +730,7 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 				if len(call.keys) > 0 {
 					return Value{}, errf("%s does not take keyword arguments", name)
 				}
-				return c.rt.hostCall(func() (Value, error) { return b.call(args) })
+				return c.rt.hostCall(func() (Value, error) { return b(args) })
 			}
 		}
 		return Value{}, errf("unknown function: %s", name)
@@ -837,7 +837,7 @@ func mapSetPath(m Value, path []string, val Value, ctx string) (Value, error) {
 	return goSet(m, 0)
 }
 
-func getPropPath(rt *Runtime, path []string, ctx string) (Value, error) {
+func getPropPath(rt *Machine, path []string, ctx string) (Value, error) {
 	if rt == nil {
 		return Nil, nil
 	}
@@ -851,7 +851,7 @@ func getPropPath(rt *Runtime, path []string, ctx string) (Value, error) {
 	return mapGetPath(root, path[1:], ctx)
 }
 
-func setPropPath(rt *Runtime, path []string, val Value, ctx string) (Value, error) {
+func setPropPath(rt *Machine, path []string, val Value, ctx string) (Value, error) {
 	if rt == nil {
 		return val, nil
 	}

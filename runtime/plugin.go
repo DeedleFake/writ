@@ -1,6 +1,6 @@
 //go:build !js && !wasm
 
-package writ
+package runtime
 
 import (
 	"fmt"
@@ -8,6 +8,12 @@ import (
 )
 
 func pluginsSupported() bool { return true }
+
+// PluginsSupported reports whether this platform can load native plugins.
+func PluginsSupported() bool { return pluginsSupported() }
+
+// LoadPlugin opens a Go plugin and calls WritPackage.
+func LoadPlugin(path string) (Package, error) { return loadPlugin(path) }
 
 func loadPlugin(path string) (Package, error) {
 	p, err := plugin.Open(path)

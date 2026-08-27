@@ -1,10 +1,12 @@
-package writ
+package runtime
 
 import (
 	"math"
 	"math/big"
 	"strconv"
 	"strings"
+
+	"deedles.dev/writ/scanner"
 )
 
 // Kind is the runtime kind of a [Value].
@@ -93,7 +95,7 @@ type mapData struct {
 }
 
 type fnVal struct {
-	clauses []clause
+	clauses []Clause
 	keys    []string
 	env     *env
 	native  Func
@@ -315,6 +317,9 @@ func (v Value) Span() (Span, bool) {
 	return v.span, true
 }
 
+// HasSpan reports whether v has a source span.
+func (v Value) HasSpan() bool { return v.hasSpan }
+
 func (v Value) IsNil() bool { return v.k == KindSymbol && v.s == "nil" }
 
 func (v Value) IsTrue() bool { return v.k == KindSymbol && v.s == "true" }
@@ -475,7 +480,7 @@ func needsTicks(name string) bool {
 	if strings.ContainsAny(name, " \t\n\r();[]',@`") {
 		return true
 	}
-	if isNumLit(name) {
+	if scanner.IsNumLit(name) {
 		return true
 	}
 	return false
@@ -642,3 +647,78 @@ func cloneList(xs []Value, vec bool) Value {
 	copy(out, xs)
 	return Value{k: KindList, xs: out, vec: vec}
 }
+
+// Comment returns a comment form. text is the source including ';'.
+func Comment(text string) Value {
+	return Value{k: KindComment, s: text}
+}
+
+// WithSpan returns a copy of v with a source span.
+func (v Value) WithSpan(start, end int) Value {
+	return v.withSpan(start, end)
+}
+
+// WithComment returns a copy of v with a trailing comment.
+func (v Value) WithComment(cmt string) Value {
+	return v.withCmt(cmt)
+}
+
+// WithBlank marks v as following a blank line.
+func (v Value) WithBlank() Value {
+	v.blank = true
+	return v
+}
+
+// WithBroke marks v as containing a newline in source.
+func (v Value) WithBroke() Value {
+	v.broke = true
+	return v
+}
+
+// WithKeySpans records source spans of map keys.
+func (v Value) WithKeySpans(spans map[string]Span) Value {
+	v.keySpans = spans
+	return v
+}
+
+// Inner returns the wrapped value of quote, unquote, or splice.
+func (v Value) Inner() Value { return v.innerVal() }
+
+// SetInner returns a copy of v wrapping in.
+func (v Value) SetInner(in Value) Value { return v.setInner(in) }
+
+// IsKey reports whether v is a keyword symbol (name:).
+func (v Value) IsKey() bool { return v.isKeySym() }
+
+// KeyName returns the map/keyword name without the trailing colon.
+func (v Value) KeyName() string { return v.keyName() }
+
+// TrailingComment is the inline comment after v, if any.
+func (v Value) TrailingComment() string { return v.cmt }
+
+// CommentText is the comment form body, including ';'.
+func (v Value) CommentText() string { return v.commentText() }
+
+// Blank reports whether a blank line preceded v.
+func (v Value) Blank() bool { return v.blank }
+
+// Broke reports whether v's source contained a newline.
+func (v Value) Broke() bool { return v.broke }
+
+// KeySpans returns recorded map key spans.
+func (v Value) KeySpans() map[string]Span { return v.keySpans }
+
+// FilterComments drops comment forms.
+func FilterComments(xs []Value) []Value { return filterComments(xs) }
+
+// IsName reports whether v is the symbol name.
+func IsName(v Value, name string) bool { return isSymName(v, name) }
+
+// FormatSymbol renders a symbol name, quoting with ticks when needed.
+func FormatSymbol(name string) string { return formatSymName(name) }
+
+// Print renders v for display, matching the language printer.
+func Print(v Value) string { return printVal(v) }
+
+// ParseInt parses a decimal integer.
+func ParseInt(s string) (Value, bool) { return intFromString(s) }

@@ -4,86 +4,36 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sync"
-	"time"
+	"strings"
+
+	"deedles.dev/writ/parser"
+	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/scanner"
+	"deedles.dev/writ/types"
 )
-
-// Func is a native function. Arguments are positional.
-type Func func(args []Value) (Value, error)
-
-// Package is a native module returned by [Runtime.RegisterPackage] or by
-// a plugin's WritPackage function.
-type Package struct {
-	Funcs map[string]Func
-	Vals  map[string]Value
-	Types map[string]Type
-}
-
-// Scheduler runs (after seconds ...) bodies. delay is in real time.
-// The default scheduler uses time.AfterFunc; callbacks take the runtime
-// lock, so they never overlap eval/Fire/after. A custom Scheduler must
-// not invoke fn on the same goroutine that is still inside Eval, Apply,
-// or Fire (that deadlocks). Overlapping callbacks are serialized by the
-// lock. Default unlimited eval is not a sandbox.
-type Scheduler func(delay time.Duration, fn func())
-
-const maxPendingAfter = 4096
-
-// PayloadKey is one event payload field.
-type PayloadKey struct {
-	Name string
-	Type Type
-}
-
-type extraBuiltin struct {
-	call   Func
-	arrows []Arrow
-}
-
-type loadedPkg struct {
-	exports  Value
-	handlers []handler
-	env      *env
-	types    Type
-}
 
 // Runtime evaluates scripts, holds the script store, and hosts packages.
 // Public methods are safe for concurrent use.
 type Runtime struct {
-	mu sync.Mutex
+	m *runtime.Machine
 
 	search        []string
-	sched         Scheduler
 	stdout        io.Writer
-	evalLimit     int
-	budget        int
-	onAfterErr    func(error)
 	nativePlugins bool
 	allowAbsolute bool
-	checking      bool
-	pendingAfter  int
 
-	pkgs    map[string]Package
-	extra   map[string]extraBuiltin
-	events  map[string][]PayloadKey
-	aliases []typeAlias
+	pkgs        map[string]runtime.Package
+	extraArrows map[string][]types.Arrow
+	events      map[string][]types.PayloadKey
+	aliases     []types.Alias
 
-	props    *mapData
-	env      *env
-	handlers []handler
-	macros   map[string][]clause
-	file     string
-
-	loaded       map[string]*loadedPkg
-	loadedOrder  []string
-	loading      []string
-	checkLoading []string
 	exportCache  map[string]cachedExport
+	checkLoading []string
 }
 
 type cachedExport struct {
-	t     Type
-	diags []Diagnostic
+	t     types.Type
+	diags []types.Diagnostic
 }
 
 // Option configures a [Runtime].
@@ -95,8 +45,8 @@ func WithSearchPath(paths ...string) Option {
 }
 
 // WithScheduler replaces the default time.AfterFunc scheduler.
-func WithScheduler(s Scheduler) Option {
-	return func(rt *Runtime) { rt.sched = s }
+func WithScheduler(s runtime.Scheduler) Option {
+	return func(rt *Runtime) { rt.m.SetScheduler(s) }
 }
 
 // WithStdout sets the writer used by the print builtin if registered.
@@ -108,12 +58,12 @@ func WithStdout(w io.Writer) Option {
 // Fire, and Apply until the next public call resets the remaining budget.
 // Zero (the default) means unlimited and is not a sandbox.
 func WithEvalLimit(n int) Option {
-	return func(rt *Runtime) { rt.evalLimit = n }
+	return func(rt *Runtime) { rt.m.SetEvalLimit(n) }
 }
 
 // WithAfterError sets a hook for errors from (after ...) callbacks.
 func WithAfterError(fn func(error)) Option {
-	return func(rt *Runtime) { rt.onAfterErr = fn }
+	return func(rt *Runtime) { rt.m.SetAfterError(fn) }
 }
 
 // WithNativePlugins allows (import) of Go plugin files (.so/.dylib/.dll).
@@ -131,386 +81,312 @@ func WithAllowAbsoluteImports() Option {
 // New constructs a runtime.
 func New(opts ...Option) *Runtime {
 	rt := &Runtime{
-		sched:       defaultSched,
+		m:           runtime.New(),
 		stdout:      io.Discard,
-		pkgs:        map[string]Package{},
-		extra:       map[string]extraBuiltin{},
-		events:      map[string][]PayloadKey{},
-		props:       newMap(),
-		loaded:      map[string]*loadedPkg{},
+		pkgs:        map[string]runtime.Package{},
+		extraArrows: map[string][]types.Arrow{},
+		events:      map[string][]types.PayloadKey{},
 		exportCache: map[string]cachedExport{},
 	}
+	rt.m.Import = rt.loadImport
 	for _, o := range opts {
 		o(rt)
 	}
 	return rt
 }
 
-func (rt *Runtime) beginBudget() {
-	if rt.evalLimit > 0 {
-		rt.budget = rt.evalLimit
-	}
-}
-
-// hostCall runs fn without holding mu so host hooks and native
-// functions may call Runtime methods.
-func (rt *Runtime) hostCall(fn func() (Value, error)) (Value, error) {
-	if rt == nil {
-		return fn()
-	}
-	rt.mu.Unlock()
-	defer rt.mu.Lock()
-	return fn()
-}
-
 // RegisterPackage installs an in-process package. (import "name") loads it
 // without touching the filesystem.
-func (rt *Runtime) RegisterPackage(name string, pkg Package) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+func (rt *Runtime) RegisterPackage(name string, pkg runtime.Package) {
+	rt.m.Lock()
+	defer rt.m.Unlock()
 	if rt.pkgs == nil {
-		rt.pkgs = map[string]Package{}
+		rt.pkgs = map[string]runtime.Package{}
 	}
 	rt.pkgs[name] = pkg
 }
 
 // RegisterBuiltin adds a host function visible as a call head.
-func (rt *Runtime) RegisterBuiltin(name string, call Func, arrows ...Arrow) error {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+func (rt *Runtime) RegisterBuiltin(name string, call runtime.Func, arrows ...types.Arrow) error {
+	rt.m.Lock()
+	defer rt.m.Unlock()
 	return rt.registerBuiltin(name, call, arrows...)
 }
 
-func (rt *Runtime) registerBuiltin(name string, call Func, arrows ...Arrow) error {
-	if isKeyword(name) {
-		return errf("cannot redefine %s", name)
+func (rt *Runtime) registerBuiltin(name string, call runtime.Func, arrows ...types.Arrow) error {
+	if scanner.IsKeyword(name) {
+		return runtime.Errorf("cannot redefine %s", name)
 	}
-	if isCoreBuiltin(name) {
-		return errf("cannot redefine %s", name)
+	if scanner.IsCoreBuiltin(name) {
+		return runtime.Errorf("cannot redefine %s", name)
 	}
-	if rt.extra == nil {
-		rt.extra = map[string]extraBuiltin{}
+	rt.m.RegisterExtra(name, call)
+	if rt.extraArrows == nil {
+		rt.extraArrows = map[string][]types.Arrow{}
 	}
-	rt.extra[name] = extraBuiltin{call: call, arrows: arrows}
+	rt.extraArrows[name] = arrows
 	return nil
 }
 
 // RegisterPrint installs a print builtin that writes to stdout (or
 // [WithStdout]).
 func (rt *Runtime) RegisterPrint() {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+	rt.m.Lock()
+	defer rt.m.Unlock()
 	w := rt.stdout
 	if w == nil {
 		w = os.Stdout
 	}
-	_ = rt.registerBuiltin("print", func(args []Value) (Value, error) {
+	_ = rt.registerBuiltin("print", func(args []runtime.Value) (runtime.Value, error) {
 		for _, a := range args {
-			_, _ = io.WriteString(w, printVal(a))
+			_, _ = io.WriteString(w, runtime.Print(a))
 		}
 		_, _ = io.WriteString(w, "\n")
-		return Nil, nil
-	}, PosRestArrow(NilType()))
+		return runtime.Nil, nil
+	}, types.PosRestArrow(types.NilType()))
 }
 
 // RegisterEvent declares an event for (on ...) and [Runtime.Fire].
 // If any events are registered, unknown event names are type errors.
-func (rt *Runtime) RegisterEvent(name string, keys ...PayloadKey) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+func (rt *Runtime) RegisterEvent(name string, keys ...types.PayloadKey) {
+	rt.m.Lock()
+	defer rt.m.Unlock()
 	if rt.events == nil {
-		rt.events = map[string][]PayloadKey{}
+		rt.events = map[string][]types.PayloadKey{}
 	}
-	rt.events[name] = append([]PayloadKey{}, keys...)
+	rt.events[name] = append([]types.PayloadKey{}, keys...)
+	names := make([]string, len(keys))
+	for i, k := range keys {
+		names[i] = k.Name
+	}
+	rt.m.SetEventKeys(name, names)
 }
 
 // RegisterAlias names a closed union of exact strings for type display
 // and host domain types.
 func (rt *Runtime) RegisterAlias(name string, members ...string) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+	rt.m.Lock()
+	defer rt.m.Unlock()
 	rt.registerAlias(name, members...)
 }
 
 func (rt *Runtime) registerAlias(name string, members ...string) {
-	ts := make([]Type, len(members))
+	ts := make([]types.Type, len(members))
 	for i, m := range members {
-		ts[i] = ExactString(m)
+		ts[i] = types.ExactString(m)
 	}
-	rt.aliases = append(rt.aliases, typeAlias{name: name, t: tOr(ts), members: append([]string{}, members...)})
+	rt.aliases = append(rt.aliases, types.Alias{Name: name, Type: types.Union(ts...), Members: append([]string{}, members...)})
 }
 
 // RegisterTypeAlias names an arbitrary type.
-func (rt *Runtime) RegisterTypeAlias(name string, t Type) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.aliases = append(rt.aliases, typeAlias{name: name, t: t})
+func (rt *Runtime) RegisterTypeAlias(name string, t types.Type) {
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.aliases = append(rt.aliases, types.Alias{Name: name, Type: t})
 }
 
 // AliasType returns the type last registered under name.
-func (rt *Runtime) AliasType(name string) (Type, bool) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
+func (rt *Runtime) AliasType(name string) (types.Type, bool) {
+	rt.m.Lock()
+	defer rt.m.Unlock()
 	for i := len(rt.aliases) - 1; i >= 0; i-- {
-		if rt.aliases[i].name == name {
-			return rt.aliases[i].t, true
+		if rt.aliases[i].Name == name {
+			return rt.aliases[i].Type, true
 		}
 	}
-	return Type{}, false
+	return types.Type{}, false
 }
 
 // SetScheduler replaces the after scheduler.
-func (rt *Runtime) SetScheduler(s Scheduler) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	if s == nil {
-		s = defaultSched
-	}
-	rt.sched = s
+func (rt *Runtime) SetScheduler(s runtime.Scheduler) {
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.m.SetScheduler(s)
 }
 
 // SetAfterError sets a hook for errors from (after ...) callbacks.
 func (rt *Runtime) SetAfterError(fn func(error)) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.onAfterErr = fn
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.m.SetAfterError(fn)
 }
 
 // Lookup returns a top-level binding from the last Eval.
-func (rt *Runtime) Lookup(name string) (Value, bool) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	if rt.env == nil {
-		return Value{}, false
-	}
-	return rt.env.get(name)
+func (rt *Runtime) Lookup(name string) (runtime.Value, bool) {
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	return rt.m.LookupLocked(name)
 }
 
 // GetProp reads the script store.
-func (rt *Runtime) GetProp(path ...string) Value {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	if len(path) == 0 {
-		return Nil
-	}
-	v, _ := getPropPath(rt, path, "get-prop")
-	return v
+func (rt *Runtime) GetProp(path ...string) runtime.Value {
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	return rt.m.GetPropLocked(path...)
 }
 
 // SetProp writes the script store. nil deletes.
-func (rt *Runtime) SetProp(val Value, path ...string) error {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	if len(path) == 0 {
-		return errMsg("set-prop needs a key")
-	}
-	_, err := setPropPath(rt, path, val, "set-prop")
-	return err
-}
-
-func (rt *Runtime) getVar(key string) Value {
-	if rt.props == nil {
-		return Nil
-	}
-	v, ok := rt.props.get(key)
-	if !ok {
-		return Nil
-	}
-	return v
-}
-
-func (rt *Runtime) setVar(key string, val Value) {
-	if rt.props == nil {
-		rt.props = newMap()
-	}
-	if val.IsNil() {
-		rt.props.del(key)
-		return
-	}
-	rt.props.put(key, val)
+func (rt *Runtime) SetProp(val runtime.Value, path ...string) error {
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	return rt.m.SetPropLocked(val, path...)
 }
 
 // Reset clears the script store, handlers, and import cache.
 func (rt *Runtime) Reset() {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.props = newMap()
-	rt.env = nil
-	rt.handlers = nil
-	rt.macros = nil
-	rt.loaded = map[string]*loadedPkg{}
-	rt.loadedOrder = nil
-	rt.loading = nil
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.m.ResetLocked()
 	rt.exportCache = map[string]cachedExport{}
-	rt.file = ""
-	rt.pendingAfter = 0
+	rt.checkLoading = nil
 }
 
 // Check type-checks src.
-func (rt *Runtime) Check(src string) CheckResult {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.beginBudget()
-	rt.checking = true
-	defer func() { rt.checking = false }()
-	return rt.checkSrc(src, rt.file)
+func (rt *Runtime) Check(src string) types.CheckResult {
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.m.BeginBudget()
+	rt.m.SetChecking(true)
+	defer rt.m.SetChecking(false)
+	return rt.checkSrc(src, rt.m.File())
 }
 
 // CheckFile type-checks a file.
-func (rt *Runtime) CheckFile(path string) CheckResult {
+func (rt *Runtime) CheckFile(path string) types.CheckResult {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return CheckResult{Diagnostics: []Diagnostic{{Message: err.Error()}}}
+		return types.CheckResult{Diagnostics: []types.Diagnostic{{Message: err.Error()}}}
 	}
 	abs, _ := filepath.Abs(path)
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.beginBudget()
-	rt.checking = true
-	prev := rt.file
-	rt.file = abs
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.m.BeginBudget()
+	rt.m.SetChecking(true)
+	prev := rt.m.File()
+	rt.m.SetFile(abs)
 	defer func() {
-		rt.checking = false
-		rt.file = prev
+		rt.m.SetChecking(false)
+		rt.m.SetFile(prev)
 	}()
 	return rt.checkSrc(string(data), abs)
 }
 
 // Eval compiles and evaluates src (boot forms only).
-func (rt *Runtime) Eval(src string) (Value, error) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.beginBudget()
-	return rt.evalSrc(src, rt.file)
+func (rt *Runtime) Eval(src string) (runtime.Value, error) {
+	forms, err := parser.Parse(src)
+	if err != nil {
+		rt.m.Lock()
+		file := rt.m.File()
+		rt.m.Unlock()
+		return runtime.Value{}, runtime.AsError(err).WithFile(file)
+	}
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.m.BeginBudget()
+	return rt.m.EvalLocked(forms)
 }
 
 // EvalFile evaluates a file's boot forms. It does not call main.
-func (rt *Runtime) EvalFile(path string) (Value, error) {
+func (rt *Runtime) EvalFile(path string) (runtime.Value, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Value{}, err
+		return runtime.Value{}, err
 	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.beginBudget()
-	return rt.evalSrc(string(data), abs)
-}
-
-func (rt *Runtime) evalSrc(src, file string) (Value, error) {
-	forms, err := Parse(src)
+	forms, err := parser.Parse(string(data))
 	if err != nil {
-		return Value{}, asError(err).withFile(file)
+		return runtime.Value{}, runtime.AsError(err).WithFile(abs)
 	}
-	if file != "" {
-		rt.file = file
-	}
-	prog, err := compileForms(forms, rt)
-	if err != nil {
-		return Value{}, asError(err).withFile(file)
-	}
-	env := makeEnv(nil)
-	installFns(prog.Fns, env)
-	rt.env = env
-	rt.macros = toMacroTable(prog.Macros)
-	for i := range prog.Handlers {
-		prog.Handlers[i].env = env
-	}
-	c := newCtx(rt, env, rt.macros)
-	v, err := evalForms(prog.Boot, env, c)
-	var hs []handler
-	for _, path := range rt.loadedOrder {
-		if l := rt.loaded[path]; l != nil {
-			hs = append(hs, l.handlers...)
-		}
-	}
-	hs = append(hs, prog.Handlers...)
-	rt.handlers = hs
-	if err != nil {
-		return v, asError(err).withFile(file)
-	}
-	return v, nil
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.m.BeginBudget()
+	rt.m.SetFile(abs)
+	return rt.m.EvalLocked(forms)
 }
 
 // Apply calls fn with positional args.
-func (rt *Runtime) Apply(fn Value, args []Value) (Value, error) {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.beginBudget()
-	c := newCtx(rt, rt.env, rt.macros)
-	return applyFn(fn, callParts{pos: args, keys: map[string]Value{}}, makeEnv(rt.env), c)
+func (rt *Runtime) Apply(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.m.BeginBudget()
+	return rt.m.ApplyLocked(fn, args)
 }
 
 // Fire runs matching (on event ...) handlers. Missing payload keys are nil.
-func (rt *Runtime) Fire(event string, payload map[string]Value) error {
-	rt.mu.Lock()
-	defer rt.mu.Unlock()
-	rt.beginBudget()
-	if payload == nil {
-		payload = map[string]Value{}
+func (rt *Runtime) Fire(event string, payload map[string]runtime.Value) error {
+	rt.m.Lock()
+	defer rt.m.Unlock()
+	rt.m.BeginBudget()
+	return rt.m.FireLocked(event, payload)
+}
+
+func (rt *Runtime) typeConfig(file string) types.Config {
+	return types.Config{
+		Events:  rt.events,
+		Aliases: rt.aliases,
+		Extra:   rt.extraArrows,
+		File:    file,
+		Import:  rt.importType,
 	}
-	keys := map[string]Value{}
-	for k, v := range payload {
-		keys[k] = v
+}
+
+func (rt *Runtime) checkSrc(src, file string) types.CheckResult {
+	if strings.TrimSpace(src) == "" {
+		return types.CheckResult{}
 	}
-	c := newCtx(rt, rt.env, rt.macros)
-	var order []string
-	spec, haveSpec := rt.events[event]
-	if haveSpec {
-		for _, k := range spec {
-			order = append(order, k.Name)
+	if file != "" {
+		for _, p := range rt.checkLoading {
+			if p == file {
+				return types.CheckResult{Diagnostics: []types.Diagnostic{{Message: "import cycle: " + file}}}
+			}
+		}
+		rt.checkLoading = append(rt.checkLoading, file)
+		defer func() { rt.checkLoading = rt.checkLoading[:len(rt.checkLoading)-1] }()
+	}
+	parsed, err := parser.Parse(src)
+	if err != nil {
+		e := runtime.AsError(err)
+		end := e.End
+		if end == 0 {
+			end = e.Start + 1
+		}
+		return types.CheckResult{Diagnostics: []types.Diagnostic{{Start: e.Start, End: end, Message: e.Message}}}
+	}
+	prog, err := rt.m.ExpandLocked(parsed)
+	if err != nil {
+		e := runtime.AsError(err)
+		end := e.End
+		if end <= e.Start {
+			end = e.Start + 1
+		}
+		return types.CheckResult{Diagnostics: []types.Diagnostic{{Start: e.Start, End: end, Message: e.Message}}}
+	}
+	res := types.Check(parsed, prog, rt.typeConfig(file))
+	if file != "" {
+		cycle := false
+		for _, d := range res.Diagnostics {
+			if strings.Contains(d.Message, "cycle") {
+				cycle = true
+				break
+			}
+		}
+		if !cycle {
+			if rt.exportCache == nil {
+				rt.exportCache = map[string]cachedExport{}
+			}
+			rt.exportCache[file] = cachedExport{t: res.Export, diags: res.Diagnostics}
 		}
 	}
-	for _, h := range rt.handlers {
-		if h.Event != event {
-			continue
-		}
-		for _, cl := range h.Clauses {
-			var call callParts
-			if cl.params.Key {
-				filtered := map[string]Value{}
-				for _, kp := range cl.params.Keys {
-					if v, ok := keys[kp.Name]; ok {
-						filtered[kp.Name] = v
-					}
-				}
-				call = callParts{keys: filtered}
-			} else {
-				pos := make([]Value, len(cl.params.Pats))
-				for i, p := range cl.params.Pats {
-					if haveSpec {
-						if i < len(order) {
-							if v, ok := payload[order[i]]; ok {
-								pos[i] = v
-								continue
-							}
-						}
-					} else if p.Bind {
-						if v, ok := payload[p.Name]; ok {
-							pos[i] = v
-							continue
-						}
-					}
-					pos[i] = Nil
-				}
-				call = callParts{pos: pos, keys: map[string]Value{}}
-			}
-			parent := h.env
-			if parent == nil {
-				parent = rt.env
-			}
-			child := makeEnv(parent)
-			if !tryBind(cl.params, call, child) {
-				continue
-			}
-			if _, err := evalForms(cl.Body, child, c); err != nil {
-				return err
-			}
-			break
-		}
-	}
-	return nil
+	return res
+}
+
+// Check type-checks src with a fresh runtime. print is registered so
+// scripts that use it type-check the same way as `writ check`.
+func Check(src string) types.CheckResult {
+	rt := New()
+	rt.RegisterPrint()
+	return rt.Check(src)
 }

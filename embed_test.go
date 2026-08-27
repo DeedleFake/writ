@@ -2,6 +2,8 @@ package writ
 
 import (
 	"bytes"
+	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -27,7 +29,7 @@ func TestImportWritFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(42)) {
+	if !v.Equal(runtime.Int64(42)) {
 		t.Fatalf("import: %v", v)
 	}
 }
@@ -61,21 +63,17 @@ func TestImportCycle(t *testing.T) {
 
 func TestRegisterPackage(t *testing.T) {
 	rt := New()
-	rt.RegisterPackage("mathx", Package{
-		Funcs: map[string]Func{
-			"double": func(args []Value) (Value, error) {
+	rt.RegisterPackage("mathx", runtime.Package{
+		Funcs: map[string]runtime.Func{
+			"double": func(args []runtime.Value) (runtime.Value, error) {
 				if len(args) != 1 || !args[0].IsInt() {
-					return Nil, errMsg("double needs an int")
+					return runtime.Nil, runtime.ErrorMsg("double needs an int")
 				}
-				return Int64(args[0].BigInt().Int64() * 2), nil
+				return runtime.Int64(args[0].BigInt().Int64() * 2), nil
 			},
 		},
-		Vals: map[string]Value{
-			"pi": Float(3.25),
-		},
-		Types: map[string]Type{
-			"double": FnType(PosArrow(IntType(), IntType())),
-			"pi":     FloatType(),
+		Vals: map[string]runtime.Value{
+			"pi": runtime.Float(3.25),
 		},
 	})
 	v, err := rt.Eval(`
@@ -85,7 +83,7 @@ func TestRegisterPackage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(6)) {
+	if !v.Equal(runtime.Int64(6)) {
 		t.Fatalf("native: %v", v)
 	}
 	res := rt.Check(`
@@ -99,19 +97,19 @@ func TestRegisterPackage(t *testing.T) {
 
 func TestRegisterPackageSimple(t *testing.T) {
 	rt := New()
-	rt.RegisterPackage("hello", Package{
-		Funcs: map[string]Func{
-			"greet": func(args []Value) (Value, error) {
-				return String("hello"), nil
+	rt.RegisterPackage("hello", runtime.Package{
+		Funcs: map[string]runtime.Func{
+			"greet": func(args []runtime.Value) (runtime.Value, error) {
+				return runtime.String("hello"), nil
 			},
 		},
-		Vals: map[string]Value{"n": Int64(1)},
+		Vals: map[string]runtime.Value{"n": runtime.Int64(1)},
 	})
 	v, err := rt.Eval(`(get (import "hello") "n")`)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(1)) {
+	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("%v", v)
 	}
 }
@@ -119,22 +117,22 @@ func TestRegisterPackageSimple(t *testing.T) {
 func TestHostBuiltinAndEvent(t *testing.T) {
 	rt := New()
 	var seen []string
-	if err := rt.RegisterBuiltin("log", func(args []Value) (Value, error) {
+	if err := rt.RegisterBuiltin("log", func(args []runtime.Value) (runtime.Value, error) {
 		if len(args) > 0 {
-			seen = append(seen, printVal(args[0]))
+			seen = append(seen, runtime.Print(args[0]))
 		}
-		return Nil, nil
-	}, PosRestArrow(NilType())); err != nil {
+		return runtime.Nil, nil
+	}, types.PosRestArrow(types.NilType())); err != nil {
 		t.Fatal(err)
 	}
-	rt.RegisterEvent("ping", PayloadKey{Name: "who", Type: StringType()})
+	rt.RegisterEvent("ping", types.PayloadKey{Name: "who", Type: types.StringType()})
 	if _, err := rt.Eval(`
 (on ping (who)
   (log who))
 `); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.Fire("ping", map[string]Value{"who": String("ada")}); err != nil {
+	if err := rt.Fire("ping", map[string]runtime.Value{"who": runtime.String("ada")}); err != nil {
 		t.Fatal(err)
 	}
 	if len(seen) != 1 || seen[0] != "ada" {
@@ -159,7 +157,7 @@ func TestAfterNoSleep(t *testing.T) {
 		t.Fatalf("delay %v", delays[0])
 	}
 	jobs[0]()
-	if !rt.GetProp("x").Equal(Int64(1)) {
+	if !rt.GetProp("x").Equal(runtime.Int64(1)) {
 		t.Fatal(rt.GetProp("x"))
 	}
 }
@@ -177,7 +175,7 @@ func TestTestdataImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(44)) {
+	if !v.Equal(runtime.Int64(44)) {
 		t.Fatalf("testdata import: %v", v)
 	}
 }
@@ -199,10 +197,10 @@ func TestImportedHandlersUseLibEnv(t *testing.T) {
 	if _, err := rt.EvalFile(use); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.Fire("tick", map[string]Value{"n": Int64(7)}); err != nil {
+	if err := rt.Fire("tick", map[string]runtime.Value{"n": runtime.Int64(7)}); err != nil {
 		t.Fatal(err)
 	}
-	if !rt.GetProp("x").Equal(Int64(7)) {
+	if !rt.GetProp("x").Equal(runtime.Int64(7)) {
 		t.Fatalf("imported on: %v %v", rt.GetProp("x"), "want 7")
 	}
 }
@@ -212,7 +210,7 @@ func TestFirePositionalWithoutRegisterEvent(t *testing.T) {
 	if _, err := rt.Eval(`(on ping (who) (set-prop "w" who))`); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.Fire("ping", map[string]Value{"who": String("ada")}); err != nil {
+	if err := rt.Fire("ping", map[string]runtime.Value{"who": runtime.String("ada")}); err != nil {
 		t.Fatal(err)
 	}
 	if rt.GetProp("w").Text() != "ada" {
@@ -228,21 +226,21 @@ func TestFireKeywordAndMissingKey(t *testing.T) {
 `); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.Fire("ping", map[string]Value{"who": String("ada")}); err != nil {
+	if err := rt.Fire("ping", map[string]runtime.Value{"who": runtime.String("ada")}); err != nil {
 		t.Fatal(err)
 	}
 	if rt.GetProp("w").Text() != "ada" {
 		t.Fatalf("kw fire: %v", rt.GetProp("w"))
 	}
 	rt2 := New()
-	rt2.RegisterEvent("ping", PayloadKey{Name: "who", Type: StringType()})
+	rt2.RegisterEvent("ping", types.PayloadKey{Name: "who", Type: types.StringType()})
 	if _, err := rt2.Eval(`
 (on ping (who)
   (set-prop "w" who))
 `); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt2.Fire("ping", map[string]Value{}); err != nil {
+	if err := rt2.Fire("ping", map[string]runtime.Value{}); err != nil {
 		t.Fatal(err)
 	}
 	if !rt2.GetProp("w").IsNil() {
@@ -258,20 +256,20 @@ func TestFireKeywordIgnoresExtraPayload(t *testing.T) {
 `); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.Fire("ping", map[string]Value{"who": String("ada"), "n": Int64(1)}); err != nil {
+	if err := rt.Fire("ping", map[string]runtime.Value{"who": runtime.String("ada"), "n": runtime.Int64(1)}); err != nil {
 		t.Fatal(err)
 	}
 	if rt.GetProp("w").Text() != "ada" {
 		t.Fatalf("extra payload keys skipped handler: %v", rt.GetProp("w"))
 	}
-	rt.RegisterEvent("pong", PayloadKey{Name: "who", Type: StringType()}, PayloadKey{Name: "n", Type: IntType()})
+	rt.RegisterEvent("pong", types.PayloadKey{Name: "who", Type: types.StringType()}, types.PayloadKey{Name: "n", Type: types.IntType()})
 	if _, err := rt.Eval(`
 (on pong (who:)
   (set-prop "p" who))
 `); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.Fire("pong", map[string]Value{"who": String("ada"), "n": Int64(1)}); err != nil {
+	if err := rt.Fire("pong", map[string]runtime.Value{"who": runtime.String("ada"), "n": runtime.Int64(1)}); err != nil {
 		t.Fatal(err)
 	}
 	if rt.GetProp("p").Text() != "ada" {
@@ -304,7 +302,7 @@ func TestMainLookupApplyImport(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(42)) {
+	if !v.Equal(runtime.Int64(42)) {
 		t.Fatalf("apply main: %v", v)
 	}
 }
@@ -339,7 +337,7 @@ func TestWithSearchPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(3)) {
+	if !v.Equal(runtime.Int64(3)) {
 		t.Fatalf("search path: %v", v)
 	}
 }
@@ -383,9 +381,9 @@ func TestAfterErrorHookCanGetProp(t *testing.T) {
 
 func TestHostBuiltinCanGetProp(t *testing.T) {
 	rt := New()
-	if err := rt.RegisterBuiltin("gp", func(args []Value) (Value, error) {
+	if err := rt.RegisterBuiltin("gp", func(args []runtime.Value) (runtime.Value, error) {
 		return rt.GetProp("x"), nil
-	}, PosRestArrow(Any())); err != nil {
+	}, types.PosRestArrow(types.Any())); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.Eval(`(set-prop "x" 3)`); err != nil {
@@ -398,8 +396,8 @@ func TestHostBuiltinCanGetProp(t *testing.T) {
 			done <- err
 			return
 		}
-		if !v.Equal(Int64(3)) {
-			done <- errMsg("want 3")
+		if !v.Equal(runtime.Int64(3)) {
+			done <- runtime.ErrorMsg("want 3")
 			return
 		}
 		done <- nil
@@ -445,7 +443,7 @@ func TestImportRejectsNonWrit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(1)) {
+	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("ok.writ: %v", v)
 	}
 }
@@ -488,7 +486,7 @@ func TestImportDeniesAbsoluteAndDotDot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(9)) {
+	if !v.Equal(runtime.Int64(9)) {
 		t.Fatalf("allow abs: %v", v)
 	}
 }
@@ -511,7 +509,7 @@ func TestSearchPathSkipsCwd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(2)) {
+	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("search: %v", v)
 	}
 }

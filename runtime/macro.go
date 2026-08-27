@@ -1,4 +1,4 @@
-package writ
+package runtime
 
 func collectImported(v Value, into map[*Value]struct{}, nodes *[]Value) {
 	for _, n := range *nodes {
@@ -317,7 +317,7 @@ func hygienicFnLike(v Value, imported []Value, subst map[string]string, name str
 	return v
 }
 
-func applyMacro(name string, clauses []clause, raw []Value, c *ctx, call Value) (Value, error) {
+func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) (Value, error) {
 	parsed, err := parseCallRaw(raw)
 	if err != nil {
 		e := asError(err)
@@ -332,7 +332,7 @@ func applyMacro(name string, clauses []clause, raw []Value, c *ctx, call Value) 
 	}
 	allPos, allKey := true, true
 	for _, cl := range clauses {
-		if cl.params.Key {
+		if cl.Params.Key {
 			allPos = false
 		} else {
 			allKey = false
@@ -346,7 +346,7 @@ func applyMacro(name string, clauses []clause, raw []Value, c *ctx, call Value) 
 	}
 	for _, clause := range clauses {
 		child := makeEnv(c.macroEnv)
-		if !tryBind(clause.params, parts, child) {
+		if !tryBind(clause.Params, parts, child) {
 			continue
 		}
 		last := Nil

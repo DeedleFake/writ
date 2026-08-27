@@ -1,51 +1,60 @@
-package writ
+package runtime
 
 import (
 	"strconv"
 	"strings"
+
+	"deedles.dev/writ/scanner"
 )
 
-type pattern struct {
+// Pattern is one parameter or literal match.
+type Pattern struct {
 	Bind  bool
 	Name  string
 	Value Value
 }
 
-type params struct {
+// Params is a function, macro, or handler parameter list.
+type Params struct {
 	Key  bool
-	Pats []pattern
-	Keys []keyPat
+	Pats []Pattern
+	Keys []KeyPat
 	Rest string
 }
 
-type keyPat struct {
+// KeyPat is one keyword parameter.
+type KeyPat struct {
 	Name string
-	Pat  pattern
+	Pat  Pattern
 }
 
-type clause struct {
-	params     params
+// Clause is one function, macro, or handler clause.
+type Clause struct {
+	Params     Params
 	Body       []Value
 	ParamsForm *Value
 }
 
-type namedFn struct {
+// NamedFn is a top-level def or defm.
+type NamedFn struct {
 	Name     string
-	Clauses  []clause
+	Clauses  []Clause
 	NameForm Value
 }
 
-type handler struct {
+// Handler is a compiled (on ...) form.
+type Handler struct {
 	Event   string
-	Clauses []clause
+	Clauses []Clause
 	env     *env
 }
 
-type program struct {
-	Handlers []handler
+// Program is expanded top-level forms.
+type Program struct {
+	Handlers []Handler
 	Boot     []Value
-	Fns      []namedFn
-	Macros   []namedFn
+	Fns      []NamedFn
+	Macros   []NamedFn
 }
 
 type lastAdj struct {
@@ -55,10 +64,10 @@ type lastAdj struct {
 }
 
 type compileState struct {
-	onMap         map[string][]clause
-	fnMap         map[string][]clause
+	onMap         map[string][]Clause
+	fnMap         map[string][]Clause
 	fnNameForm    map[string]Value
-	macroMap      map[string][]clause
+	macroMap      map[string][]Clause
 	macroNameForm map[string]Value
 	boot          []Value
 	last          lastAdj
@@ -66,17 +75,17 @@ type compileState struct {
 
 func newCompileState() *compileState {
 	return &compileState{
-		onMap:         map[string][]clause{},
-		fnMap:         map[string][]clause{},
+		onMap:         map[string][]Clause{},
+		fnMap:         map[string][]Clause{},
 		fnNameForm:    map[string]Value{},
-		macroMap:      map[string][]clause{},
+		macroMap:      map[string][]Clause{},
 		macroNameForm: map[string]Value{},
 	}
 }
 
 func (s *compileState) breakAdj() { s.last.ok = false }
 
-func (s *compileState) addFn(kind, name string, params params, body []Value, paramsForm, nameForm Value, adj bool) error {
+func (s *compileState) addFn(kind, name string, params Params, body []Value, paramsForm, nameForm Value, adj bool) error {
 	mp := s.fnMap
 	if kind == "macro" {
 		mp = s.macroMap
@@ -94,7 +103,7 @@ func (s *compileState) addFn(kind, name string, params params, body []Value, par
 	if unreachableBy(list, params) {
 		return errf("unreachable clause for %s", name)
 	}
-	list = append(list, clause{params: params, Body: body, ParamsForm: &paramsForm})
+	list = append(list, Clause{Params: params, Body: body, ParamsForm: &paramsForm})
 	mp[name] = list
 	s.last = lastAdj{t: kind, name: name, ok: true}
 	if kind == "fn" {
@@ -124,13 +133,13 @@ func (s *compileState) addOn(ev Value, paramsForm Value, body []Value) error {
 		return errf("unreachable clause for %s", ev.s)
 	}
 	pf := paramsForm
-	list = append(list, clause{params: params, Body: body, ParamsForm: &pf})
+	list = append(list, Clause{Params: params, Body: body, ParamsForm: &pf})
 	s.onMap[ev.s] = list
 	s.last = lastAdj{t: "on", name: ev.s, ok: true}
 	return nil
 }
 
-func compileForms(forms []Value, rt *Runtime) (program, error) {
+func compileForms(forms []Value, rt *Machine) (Program, error) {
 	s := newCompileState()
 	for _, form := range forms {
 		if form.k == KindComment {
@@ -145,32 +154,32 @@ func compileForms(forms []Value, rt *Runtime) (program, error) {
 				paramsForm = form.xs[2]
 			}
 			if err := s.addOn(ev, paramsForm, form.xs[3:]); err != nil {
-				return program{}, err
+				return Program{}, err
 			}
 			continue
 		}
 		if got, ok, err := asDefForm(form, "def"); err != nil {
-			return program{}, err
+			return Program{}, err
 		} else if ok {
 			if _, has := s.macroMap[got.Name]; has {
-				return program{}, errf("%s cannot be both a function and a macro", got.Name)
+				return Program{}, errf("%s cannot be both a function and a macro", got.Name)
 			}
-			if err := s.addFn("fn", got.Name, got.params, got.Body, got.ParamsForm, got.NameForm, true); err != nil {
-				return program{}, err
+			if err := s.addFn("fn", got.Name, got.Params, got.Body, got.ParamsForm, got.NameForm, true); err != nil {
+				return Program{}, err
 			}
 			continue
 		}
 		if got, ok, err := asDefForm(form, "defm"); err != nil {
-			return program{}, err
+			return Program{}, err
 		} else if ok {
 			if _, has := s.fnMap[got.Name]; has {
-				return program{}, errf("%s cannot be both a function and a macro", got.Name)
+				return Program{}, errf("%s cannot be both a function and a macro", got.Name)
 			}
-			if isKeyword(got.Name) || isBuiltinName(got.Name) {
-				return program{}, errf("cannot redefine %s", got.Name)
+			if scanner.IsKeyword(got.Name) || scanner.IsBuiltin(got.Name) {
+				return Program{}, errf("cannot redefine %s", got.Name)
 			}
-			if err := s.addFn("macro", got.Name, got.params, got.Body, got.ParamsForm, got.NameForm, true); err != nil {
-				return program{}, err
+			if err := s.addFn("macro", got.Name, got.Params, got.Body, got.ParamsForm, got.NameForm, true); err != nil {
+				return Program{}, err
 			}
 			continue
 		}
@@ -179,19 +188,19 @@ func compileForms(forms []Value, rt *Runtime) (program, error) {
 	}
 
 	env := makeEnv(nil)
-	var fns []namedFn
+	var fns []NamedFn
 	for name, clauses := range s.fnMap {
-		fns = append(fns, namedFn{Name: name, Clauses: clauses, NameForm: s.fnNameForm[name]})
+		fns = append(fns, NamedFn{Name: name, Clauses: clauses, NameForm: s.fnNameForm[name]})
 	}
-	var macros []namedFn
+	var macros []NamedFn
 	for name, clauses := range s.macroMap {
-		macros = append(macros, namedFn{Name: name, Clauses: clauses, NameForm: s.macroNameForm[name]})
+		macros = append(macros, NamedFn{Name: name, Clauses: clauses, NameForm: s.macroNameForm[name]})
 	}
 	installFns(fns, env)
 	macroTable := toMacroTable(macros)
 	c := newCtx(rt, env, macroTable)
 
-	expandBody := func(clauses []clause) error {
+	expandBody := func(clauses []Clause) error {
 		for i := range clauses {
 			body := make([]Value, len(clauses[i].Body))
 			for j, b := range clauses[i].Body {
@@ -216,7 +225,7 @@ func compileForms(forms []Value, rt *Runtime) (program, error) {
 			if _, has := s.macroMap[got.Name]; has {
 				return false, errf("%s cannot be both a function and a macro", got.Name)
 			}
-			if err := s.addFn("fn", got.Name, got.params, got.Body, got.ParamsForm, got.NameForm, false); err != nil {
+			if err := s.addFn("fn", got.Name, got.Params, got.Body, got.ParamsForm, got.NameForm, false); err != nil {
 				return false, err
 			}
 			env.set(got.Name, makeFnVal(s.fnMap[got.Name], env))
@@ -228,7 +237,7 @@ func compileForms(forms []Value, rt *Runtime) (program, error) {
 			if _, has := s.fnMap[got.Name]; has {
 				return false, errf("%s cannot be both a function and a macro", got.Name)
 			}
-			if err := s.addFn("macro", got.Name, got.params, got.Body, got.ParamsForm, got.NameForm, false); err != nil {
+			if err := s.addFn("macro", got.Name, got.Params, got.Body, got.ParamsForm, got.NameForm, false); err != nil {
 				return false, err
 			}
 			macroTable[got.Name] = s.macroMap[got.Name]
@@ -257,7 +266,7 @@ func compileForms(forms []Value, rt *Runtime) (program, error) {
 				return false, errf("unreachable clause for %s", ev.s)
 			}
 			pf := paramsForm
-			list = append(list, clause{params: params, Body: form.xs[3:], ParamsForm: &pf})
+			list = append(list, Clause{Params: params, Body: form.xs[3:], ParamsForm: &pf})
 			s.onMap[ev.s] = list
 			return true, nil
 		}
@@ -269,11 +278,11 @@ func compileForms(forms []Value, rt *Runtime) (program, error) {
 	for _, form := range s.boot {
 		ex, err := expandVal(form, env, c)
 		if err != nil {
-			return program{}, err
+			return Program{}, err
 		}
 		took, err := takeExpanded(ex)
 		if err != nil {
-			return program{}, err
+			return Program{}, err
 		}
 		if took {
 			continue
@@ -282,73 +291,79 @@ func compileForms(forms []Value, rt *Runtime) (program, error) {
 	}
 	for name, clauses := range s.fnMap {
 		if err := expandBody(clauses); err != nil {
-			return program{}, err
+			return Program{}, err
 		}
 		s.fnMap[name] = clauses
 	}
 	for name, clauses := range s.onMap {
 		if err := expandBody(clauses); err != nil {
-			return program{}, err
+			return Program{}, err
 		}
 		s.onMap[name] = clauses
 	}
 
-	var handlers []handler
+	var handlers []Handler
 	for ev, clauses := range s.onMap {
-		handlers = append(handlers, handler{Event: ev, Clauses: clauses, env: env})
+		handlers = append(handlers, Handler{Event: ev, Clauses: clauses, env: env})
 	}
-	var outFns []namedFn
+	var outFns []NamedFn
 	for name, clauses := range s.fnMap {
-		outFns = append(outFns, namedFn{Name: name, Clauses: clauses, NameForm: s.fnNameForm[name]})
+		outFns = append(outFns, NamedFn{Name: name, Clauses: clauses, NameForm: s.fnNameForm[name]})
 	}
-	var outMacros []namedFn
+	var outMacros []NamedFn
 	for name, clauses := range s.macroMap {
-		outMacros = append(outMacros, namedFn{Name: name, Clauses: clauses, NameForm: s.macroNameForm[name]})
+		outMacros = append(outMacros, NamedFn{Name: name, Clauses: clauses, NameForm: s.macroNameForm[name]})
 	}
-	return program{Handlers: handlers, Boot: newBoot, Fns: outFns, Macros: outMacros}, nil
+	return Program{Handlers: handlers, Boot: newBoot, Fns: outFns, Macros: outMacros}, nil
 }
 
-type defHead struct {
+// DefHead is a parsed (def ...) or (defm ...) head.
+type DefHead struct {
 	Name       string
 	NameForm   Value
-	params     params
+	Params     Params
 	ParamsForm Value
 	Body       []Value
 	HeadForm   Value
 }
 
-func asDefForm(form Value, kw string) (defHead, bool, error) {
+func asDefForm(form Value, kw string) (DefHead, bool, error) {
 	if form.k != KindList || len(form.xs) == 0 || !isSymName(form.xs[0], kw) {
-		return defHead{}, false, nil
+		return DefHead{}, false, nil
 	}
 	h, err := parseDefHead(form, kw)
 	if err != nil {
-		return defHead{}, false, err
+		return DefHead{}, false, err
 	}
 	return h, true, nil
 }
 
-func parseDefHead(form Value, kw string) (defHead, error) {
+// AsDefForm reports whether form is a (def ...) or (defm ...) when kw matches.
+func AsDefForm(form Value, kw string) (DefHead, bool, error) {
+	return asDefForm(form, kw)
+}
+
+func parseDefHead(form Value, kw string) (DefHead, error) {
 	hint := "(" + kw + " (name args...) body)"
 	if form.k != KindList || len(form.xs) == 0 || !isSymName(form.xs[0], kw) {
-		return defHead{}, errMsg(hint)
+		return DefHead{}, errMsg(hint)
 	}
 	if len(form.xs) < 2 {
-		return defHead{}, errMsg(hint)
+		return DefHead{}, errMsg(hint)
 	}
 	head := form.xs[1]
 	if head.k != KindList || head.vec {
-		return defHead{}, errMsg(hint)
+		return DefHead{}, errMsg(hint)
 	}
 	if len(head.xs) == 0 {
-		return defHead{}, errMsg(hint + " needs a name")
+		return DefHead{}, errMsg(hint + " needs a name")
 	}
 	nameForm := head.xs[0]
 	if nameForm.k != KindSymbol || nameForm.s == "" || strings.HasSuffix(nameForm.s, ":") {
-		return defHead{}, errMsg(hint + " needs a name")
+		return DefHead{}, errMsg(hint + " needs a name")
 	}
 	if nameForm.s == "true" || nameForm.s == "false" || nameForm.s == "nil" {
-		return defHead{}, errf("cannot redefine %s", nameForm.s)
+		return DefHead{}, errf("cannot redefine %s", nameForm.s)
 	}
 	paramsForm := CallList(head.xs[1:]...)
 	paramsForm.xs = head.xs[1:]
@@ -357,12 +372,12 @@ func parseDefHead(form Value, kw string) (defHead, error) {
 	}
 	params, err := parseParams(paramsForm, kw)
 	if err != nil {
-		return defHead{}, err
+		return DefHead{}, err
 	}
-	return defHead{
+	return DefHead{
 		Name:       nameForm.s,
 		NameForm:   nameForm,
-		params:     params,
+		Params:     params,
 		ParamsForm: paramsForm,
 		Body:       form.xs[2:],
 		HeadForm:   head,
@@ -373,35 +388,35 @@ func isLit(v Value) bool {
 	return v.k == KindInt || v.k == KindFloat || v.k == KindString || reservedLit(v)
 }
 
-func asPattern(v Value) (pattern, error) {
+func asPattern(v Value) (Pattern, error) {
 	if v.k == KindSymbol {
 		if reservedLit(v) {
-			return pattern{Value: Symbol(v.s)}, nil
+			return Pattern{Value: Symbol(v.s)}, nil
 		}
 		if strings.HasSuffix(v.s, ":") && len(v.s) > 1 {
-			return pattern{}, errMsg("parameter must be a name or a literal")
+			return Pattern{}, errMsg("parameter must be a name or a literal")
 		}
 		if v.s == "" {
-			return pattern{}, errMsg("empty parameter name")
+			return Pattern{}, errMsg("empty parameter name")
 		}
-		return pattern{Bind: true, Name: v.s}, nil
+		return Pattern{Bind: true, Name: v.s}, nil
 	}
 	if isLit(v) {
-		return pattern{Value: v}, nil
+		return Pattern{Value: v}, nil
 	}
-	return pattern{}, errMsg("parameter must be a name or a literal")
+	return Pattern{}, errMsg("parameter must be a name or a literal")
 }
 
-func parseParams(form Value, ctx string) (params, error) {
+func parseParams(form Value, ctx string) (Params, error) {
 	if form.k != KindList {
-		return params{}, errf("%s needs a parameter list", ctx)
+		return Params{}, errf("%s needs a parameter list", ctx)
 	}
 	if form.vec {
-		return params{}, errf("%s needs a parameter list in (...)", ctx)
+		return Params{}, errf("%s needs a parameter list in (...)", ctx)
 	}
 	var mode string
-	var pos []pattern
-	var keys []keyPat
+	var pos []Pattern
+	var keys []KeyPat
 	var seen []string
 	var rest string
 	for i := 0; i < len(form.xs); {
@@ -412,77 +427,77 @@ func parseParams(form Value, ctx string) (params, error) {
 		}
 		if p.k == KindSplice {
 			if ctx != "defm" {
-				return params{}, errMsg("only defm can use @rest")
+				return Params{}, errMsg("only defm can use @rest")
 			}
 			if mode == "key" {
-				return params{}, errMsg("do not mix positional and keyword parameters")
+				return Params{}, errMsg("do not mix positional and keyword parameters")
 			}
 			if rest != "" {
-				return params{}, errMsg("only one @rest parameter is allowed")
+				return Params{}, errMsg("only one @rest parameter is allowed")
 			}
 			inner := p.innerVal()
 			if inner.k != KindSymbol || inner.s == "" || strings.HasSuffix(inner.s, ":") {
-				return params{}, errMsg("@rest needs a name")
+				return Params{}, errMsg("@rest needs a name")
 			}
 			for _, x := range form.xs[i+1:] {
 				if x.k != KindComment {
-					return params{}, errMsg("@rest must be last")
+					return Params{}, errMsg("@rest must be last")
 				}
 			}
 			mode = "pos"
 			rest = inner.s
 			if containsStr(seen, rest) {
-				return params{}, errf("duplicate parameter %s", rest)
+				return Params{}, errf("duplicate parameter %s", rest)
 			}
 			seen = append(seen, rest)
 			i++
 			continue
 		}
 		if rest != "" {
-			return params{}, errMsg("@rest must be last")
+			return Params{}, errMsg("@rest must be last")
 		}
 		if p.isKeySym() {
 			if mode == "pos" {
-				return params{}, errMsg("do not mix positional and keyword parameters")
+				return Params{}, errMsg("do not mix positional and keyword parameters")
 			}
 			mode = "key"
 			name := p.keyName()
 			if name == "" {
-				return params{}, errMsg("empty parameter name")
+				return Params{}, errMsg("empty parameter name")
 			}
 			if containsStr(seen, name) {
-				return params{}, errf("duplicate parameter %s", name)
+				return Params{}, errf("duplicate parameter %s", name)
 			}
 			seen = append(seen, name)
 			nextOK := i+1 < len(form.xs) && !form.xs[i+1].isKeySym() && form.xs[i+1].k != KindComment
 			if nextOK {
 				pat, err := asPattern(form.xs[i+1])
 				if err != nil {
-					return params{}, err
+					return Params{}, err
 				}
-				keys = append(keys, keyPat{Name: name, Pat: pat})
+				keys = append(keys, KeyPat{Name: name, Pat: pat})
 				i += 2
 			} else {
-				keys = append(keys, keyPat{Name: name, Pat: pattern{Bind: true, Name: name}})
+				keys = append(keys, KeyPat{Name: name, Pat: Pattern{Bind: true, Name: name}})
 				i++
 			}
 			continue
 		}
 		if mode == "key" {
-			return params{}, errMsg("do not mix positional and keyword parameters")
+			return Params{}, errMsg("do not mix positional and keyword parameters")
 		}
 		mode = "pos"
 		pat, err := asPattern(p)
 		if err != nil {
-			return params{}, err
+			return Params{}, err
 		}
 		pos = append(pos, pat)
 		i++
 	}
 	if mode == "key" {
-		return params{Key: true, Keys: keys}, nil
+		return Params{Key: true, Keys: keys}, nil
 	}
-	return params{Pats: pos, Rest: rest}, nil
+	return Params{Pats: pos, Rest: rest}, nil
 }
 
 type callRaw struct {
@@ -525,7 +540,7 @@ func parseCallRaw(raw []Value) (callRaw, error) {
 	return out, nil
 }
 
-func clauseKeys(params params) []string {
+func clauseKeys(params Params) []string {
 	if !params.Key {
 		return nil
 	}
@@ -536,11 +551,11 @@ func clauseKeys(params params) []string {
 	return out
 }
 
-func unionKeys(clauses []clause) []string {
+func unionKeys(clauses []Clause) []string {
 	seen := map[string]struct{}{}
 	var out []string
 	for _, c := range clauses {
-		for _, k := range clauseKeys(c.params) {
+		for _, k := range clauseKeys(c.Params) {
 			if _, ok := seen[k]; ok {
 				continue
 			}
@@ -551,7 +566,7 @@ func unionKeys(clauses []clause) []string {
 	return out
 }
 
-func patCovers(earlier pattern, later *pattern) bool {
+func patCovers(earlier Pattern, later *Pattern) bool {
 	if earlier.Bind {
 		return true
 	}
@@ -561,7 +576,7 @@ func patCovers(earlier pattern, later *pattern) bool {
 	return earlier.Value.Equal(later.Value)
 }
 
-func clauseCovers(earlier, later params) bool {
+func clauseCovers(earlier, later Params) bool {
 	if earlier.Key != later.Key {
 		return false
 	}
@@ -592,7 +607,7 @@ func clauseCovers(earlier, later params) bool {
 		}
 		return true
 	}
-	laterBy := map[string]pattern{}
+	laterBy := map[string]Pattern{}
 	for _, p := range later.Keys {
 		laterBy[p.Name] = p.Pat
 	}
@@ -600,7 +615,7 @@ func clauseCovers(earlier, later params) bool {
 	for _, p := range earlier.Keys {
 		earlierNames[p.Name] = struct{}{}
 		lp, ok := laterBy[p.Name]
-		var ptr *pattern
+		var ptr *Pattern
 		if ok {
 			ptr = &lp
 		}
@@ -616,9 +631,9 @@ func clauseCovers(earlier, later params) bool {
 	return true
 }
 
-func unreachableBy(prev []clause, next params) bool {
+func unreachableBy(prev []Clause, next Params) bool {
 	for _, c := range prev {
-		if clauseCovers(c.params, next) {
+		if clauseCovers(c.Params, next) {
 			return true
 		}
 	}
@@ -675,7 +690,7 @@ func maxSlot(args []Value) (int, error) {
 	max := 0
 	for _, a := range args {
 		err := walkSlots(a, func(name string, node Value) error {
-			if !isSlotTok(name) {
+			if !scanner.IsSlot(name) {
 				return errValf(node, "bad slot %s", name)
 			}
 			n, _ := strconv.Atoi(name[1:])
@@ -729,12 +744,12 @@ func hasNestedFn(args []Value) bool {
 	return false
 }
 
-func slotParams(n int) params {
-	pats := make([]pattern, n)
+func slotParams(n int) Params {
+	pats := make([]Pattern, n)
 	for i := 1; i <= n; i++ {
-		pats[i-1] = pattern{Bind: true, Name: "#" + strconv.Itoa(i)}
+		pats[i-1] = Pattern{Bind: true, Name: "#" + strconv.Itoa(i)}
 	}
-	return params{Pats: pats}
+	return Params{Pats: pats}
 }
 
 func shortFnBody(args []Value) []Value {
@@ -747,7 +762,7 @@ func shortFnBody(args []Value) []Value {
 
 type fnParsed struct {
 	kind    string
-	clauses []clause
+	clauses []Clause
 }
 
 func parseFn(args []Value) (fnParsed, error) {
@@ -761,13 +776,13 @@ func parseFn(args []Value) (fnParsed, error) {
 		}
 		return fnParsed{
 			kind:    "short",
-			clauses: []clause{{params: slotParams(n), Body: shortFnBody(args)}},
+			clauses: []Clause{{Params: slotParams(n), Body: shortFnBody(args)}},
 		}, nil
 	}
 	if len(args) == 0 {
 		return fnParsed{}, errMsg("(fn (args...) body)")
 	}
-	var clauses []clause
+	var clauses []Clause
 	i := 0
 	for i < len(args) {
 		paramsForm := args[i]
@@ -788,7 +803,7 @@ func parseFn(args []Value) (fnParsed, error) {
 			return fnParsed{}, errMsg("unreachable clause")
 		}
 		pf := paramsForm
-		clauses = append(clauses, clause{params: params, Body: body, ParamsForm: &pf})
+		clauses = append(clauses, Clause{Params: params, Body: body, ParamsForm: &pf})
 		if i < len(args) && isFnSep(args[i]) {
 			i++
 			if i >= len(args) {
@@ -799,10 +814,20 @@ func parseFn(args []Value) (fnParsed, error) {
 	return fnParsed{kind: "long", clauses: clauses}, nil
 }
 
-type ifClause struct {
-	test *Value
-	not  bool
-	body []Value
+// ParseFn parses (fn ...) arguments.
+func ParseFn(args []Value) (kind string, clauses []Clause, err error) {
+	parsed, err := parseFn(args)
+	if err != nil {
+		return "", nil, err
+	}
+	return parsed.kind, parsed.clauses, nil
+}
+
+// IfClause is one branch of (if ...).
+type IfClause struct {
+	Test *Value
+	Not  bool
+	Body []Value
 }
 
 func isElseSym(v Value) bool { return isSymName(v, "else") }
@@ -823,11 +848,11 @@ func readIfTest(args []Value, i int, ctx string) (test Value, not bool, next int
 	return args[i], false, i + 1, nil
 }
 
-func parseIfArgs(args []Value) ([]ifClause, error) {
+func parseIfArgs(args []Value) ([]IfClause, error) {
 	if len(args) == 0 {
 		return nil, errMsg("(if test ...)")
 	}
-	var clauses []ifClause
+	var clauses []IfClause
 	test, not, i, err := readIfTest(args, 0, "if")
 	if err != nil {
 		return nil, err
@@ -838,7 +863,7 @@ func parseIfArgs(args []Value) ([]ifClause, error) {
 		a := args[i]
 		if isElseSym(a) {
 			t := curTest
-			clauses = append(clauses, ifClause{test: &t, not: curNot, body: body})
+			clauses = append(clauses, IfClause{Test: &t, Not: curNot, Body: body})
 			i++
 			if i < len(args) && isIfSym(args[i]) {
 				i++
@@ -850,15 +875,20 @@ func parseIfArgs(args []Value) ([]ifClause, error) {
 				body = nil
 				continue
 			}
-			clauses = append(clauses, ifClause{body: args[i:]})
+			clauses = append(clauses, IfClause{Body: args[i:]})
 			return clauses, nil
 		}
 		body = append(body, a)
 		i++
 	}
 	t := curTest
-	clauses = append(clauses, ifClause{test: &t, not: curNot, body: body})
+	clauses = append(clauses, IfClause{Test: &t, Not: curNot, Body: body})
 	return clauses, nil
+}
+
+// ParseIfArgs parses (if ...) arguments.
+func ParseIfArgs(args []Value) ([]IfClause, error) {
+	return parseIfArgs(args)
 }
 
 func containsStr(xs []string, s string) bool {
@@ -870,18 +900,18 @@ func containsStr(xs []string, s string) bool {
 	return false
 }
 
-func makeFnVal(clauses []clause, env *env) Value {
+func makeFnVal(clauses []Clause, env *env) Value {
 	return Value{k: KindFn, fn: &fnVal{clauses: clauses, keys: unionKeys(clauses), env: env}}
 }
 
-func installFns(fns []namedFn, env *env) {
+func installFns(fns []NamedFn, env *env) {
 	for _, f := range fns {
 		env.set(f.Name, makeFnVal(f.Clauses, env))
 	}
 }
 
-func toMacroTable(macros []namedFn) map[string][]clause {
-	m := map[string][]clause{}
+func toMacroTable(macros []NamedFn) map[string][]Clause {
+	m := map[string][]Clause{}
 	for _, x := range macros {
 		m[x.Name] = x.Clauses
 	}

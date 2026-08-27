@@ -62,37 +62,45 @@ Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbs
 ## Embed
 
 ```go
+import (
+    "deedles.dev/writ"
+    "deedles.dev/writ/runtime"
+    "deedles.dev/writ/types"
+)
+
 rt := writ.New()
 rt.RegisterPrint()
-rt.RegisterPackage("mathx", writ.Package{
-    Funcs: map[string]writ.Func{
-        "double": func(args []writ.Value) (writ.Value, error) {
-            return writ.Int64(args[0].BigInt().Int64() * 2), nil
+rt.RegisterPackage("mathx", runtime.Package{
+    Funcs: map[string]runtime.Func{
+        "double": func(args []runtime.Value) (runtime.Value, error) {
+            return runtime.Int64(args[0].BigInt().Int64() * 2), nil
         },
     },
 })
-rt.RegisterEvent("tick", writ.PayloadKey{Name: "n", Type: writ.IntType()})
+rt.RegisterEvent("tick", types.PayloadKey{Name: "n", Type: types.IntType()})
 rt.RegisterAlias("color", "red", "blue")
 rt.SetScheduler(func(d time.Duration, fn func()) { /* own loop */ })
 
 if _, err := rt.EvalFile("script.writ"); err != nil { ... }
-_ = rt.Fire("tick", map[string]writ.Value{"n": writ.Int64(1)})
+_ = rt.Fire("tick", map[string]runtime.Value{"n": runtime.Int64(1)})
 res := rt.Check(src) // diagnostics and type hints
 ```
 
 A native plugin exports:
 
 ```go
-func WritPackage() writ.Package
+func WritPackage() runtime.Package
 ```
 
 Build with `go build -buildmode=plugin`. In-process `RegisterPackage` is the embedding path that works everywhere, including WASM.
 
-## Check and format from Go
+## Parse, format, and tokens
+
+Editors and formatters import the package that owns the name:
 
 ```go
-forms, err := writ.Parse(src)
-text, err := writ.Format(src)
-toks := writ.Tokenize(src)
-res := writ.Check(src)
+forms, err := parser.Parse(src)
+text, err := parser.Format(src)
+toks := scanner.Tokenize(src)
+res := rt.Check(src)
 ```

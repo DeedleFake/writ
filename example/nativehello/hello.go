@@ -3,24 +3,24 @@
 //	go build -buildmode=plugin -o nativehello.so
 package main
 
-import "deedles.dev/writ"
+import "deedles.dev/writ/runtime"
 
 func main() {}
 
 // WritPackage is the plugin entry point.
-func WritPackage() writ.Package {
-	return writ.Package{
-		Funcs: map[string]writ.Func{
-			"greet": func(args []writ.Value) (writ.Value, error) {
+func WritPackage() runtime.Package {
+	return runtime.Package{
+		Funcs: map[string]runtime.Func{
+			"greet": func(args []runtime.Value) (runtime.Value, error) {
 				name := "world"
-				if len(args) > 0 && args[0].Kind() == writ.KindString {
+				if len(args) > 0 && args[0].Kind() == runtime.KindString {
 					name = args[0].Text()
 				}
-				return writ.String("hello, " + name), nil
+				return runtime.String("hello, " + name), nil
 			},
 		},
-		Vals: map[string]writ.Value{
-			"version": writ.Int64(1),
+		Vals: map[string]runtime.Value{
+			"version": runtime.Int64(1),
 		},
 	}
 }

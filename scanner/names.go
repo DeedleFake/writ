@@ -1,10 +1,25 @@
-package writ
+package scanner
 
 // IsKeyword reports whether name is a special form.
-func IsKeyword(name string) bool { return isKeyword(name) }
+func IsKeyword(name string) bool {
+	_, ok := keywords[name]
+	return ok
+}
 
 // IsBuiltin reports whether name is a core builtin (including true/false/nil).
-func IsBuiltin(name string) bool { return isBuiltinName(name) }
+func IsBuiltin(name string) bool {
+	_, ok := builtins[name]
+	return ok
+}
+
+// IsCoreBuiltin reports whether name is a callable core builtin.
+// true, false, and nil are builtins but not callable.
+func IsCoreBuiltin(name string) bool {
+	if name == "true" || name == "false" || name == "nil" {
+		return false
+	}
+	return IsBuiltin(name)
+}
 
 var keywords = map[string]struct{}{
 	"def":    {},
@@ -37,26 +52,4 @@ var builtins = map[string]struct{}{
 	"str?": {}, "symbol?": {}, "bool?": {}, "nil?": {},
 	"get-prop": {}, "set-prop": {}, "update-prop": {},
 	"true": {}, "false": {}, "nil": {},
-}
-
-func isKeyword(name string) bool {
-	_, ok := keywords[name]
-	return ok
-}
-
-func isBuiltinName(name string) bool {
-	_, ok := builtins[name]
-	return ok
-}
-
-func isCoreBuiltin(name string) bool {
-	if name == "true" || name == "false" || name == "nil" {
-		return false
-	}
-	return isBuiltinName(name)
-}
-
-var bodySpecials = map[string]struct{}{
-	"on": {}, "def": {}, "fn": {}, "let": {}, "if": {},
-	"after": {}, "pipe": {}, "let!": {}, "defm": {}, "import": {},
 }

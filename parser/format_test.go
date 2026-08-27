@@ -1,70 +1,76 @@
-package writ
+package parser
 
-import "testing"
+import (
+	"testing"
 
-func stripComments(v Value) Value {
-	switch v.k {
-	case KindComment:
-		return Nil
-	case KindQuote, KindUnquote, KindSplice:
-		return v.setInner(stripComments(v.innerVal()))
-	case KindList:
-		var xs []Value
-		for _, x := range v.xs {
-			if x.k == KindComment {
+	"deedles.dev/writ/runtime"
+)
+
+func stripComments(v runtime.Value) runtime.Value {
+	switch v.Kind() {
+	case runtime.KindComment:
+		return runtime.Nil
+	case runtime.KindQuote:
+		return runtime.Quote(stripComments(v.Inner()))
+	case runtime.KindUnquote:
+		return runtime.Unquote(stripComments(v.Inner()))
+	case runtime.KindSplice:
+		return runtime.Splice(stripComments(v.Inner()))
+	case runtime.KindList:
+		var xs []runtime.Value
+		for _, x := range v.Items() {
+			if x.Kind() == runtime.KindComment {
 				continue
 			}
 			xs = append(xs, stripComments(x))
 		}
-		v.xs = xs
-		v.cmt = ""
-		return v
-	case KindMap:
-		if v.mp == nil {
-			return v
+		if v.IsVec() {
+			return runtime.List(xs...)
 		}
-		m := newMap()
-		for i, k := range v.mp.keys {
-			m.put(k, stripComments(v.mp.vals[i]))
+		return runtime.CallList(xs...)
+	case runtime.KindMap:
+		var pairs []runtime.MapPair
+		for _, p := range v.Pairs() {
+			pairs = append(pairs, runtime.MapPair{Key: p.Key, Value: stripComments(p.Value)})
 		}
-		v.mp = m
-		v.cmt = ""
-		return v
+		return runtime.MapFrom(pairs...)
 	default:
-		v.cmt = ""
-		return v
+		return v.WithComment("")
 	}
 }
 
-func formEq(a, b Value) bool {
+func formEq(a, b runtime.Value) bool {
 	a, b = stripComments(a), stripComments(b)
-	if a.k != b.k || a.vec != b.vec {
+	if a.Kind() != b.Kind() || a.IsVec() != b.IsVec() {
 		return false
 	}
-	switch a.k {
-	case KindList:
-		if len(a.xs) != len(b.xs) {
+	switch a.Kind() {
+	case runtime.KindList:
+		as, bs := a.Items(), b.Items()
+		if len(as) != len(bs) {
 			return false
 		}
-		for i := range a.xs {
-			if !formEq(a.xs[i], b.xs[i]) {
+		for i := range as {
+			if !formEq(as[i], bs[i]) {
 				return false
 			}
 		}
 		return true
-	case KindMap:
-		if a.mp.len() != b.mp.len() {
+	case runtime.KindMap:
+		ap, bp := a.Pairs(), b.Pairs()
+		if len(ap) != len(bp) {
 			return false
 		}
-		for i, k := range a.mp.keys {
-			ov, ok := b.mp.get(k)
-			if !ok || !formEq(a.mp.vals[i], ov) {
+		for i, pair := range ap {
+			ov, ok := b.MapGet(pair.Key)
+			if !ok || !formEq(pair.Value, ov) {
 				return false
 			}
+			_ = bp[i]
 		}
 		return true
-	case KindQuote, KindUnquote, KindSplice:
-		return formEq(a.innerVal(), b.innerVal())
+	case runtime.KindQuote, runtime.KindUnquote, runtime.KindSplice:
+		return formEq(a.Inner(), b.Inner())
 	default:
 		return a.Equal(b)
 	}

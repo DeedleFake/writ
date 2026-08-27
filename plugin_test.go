@@ -1,6 +1,7 @@
 package writ
 
 import (
+	"deedles.dev/writ/runtime"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -10,7 +11,7 @@ import (
 )
 
 func TestPluginLoad(t *testing.T) {
-	if !pluginsSupported() {
+	if !runtime.PluginsSupported() {
 		t.Skip("plugins not supported on this platform")
 	}
 	so := filepath.Join(t.TempDir(), "nativehello.so")
@@ -24,7 +25,7 @@ func TestPluginLoad(t *testing.T) {
 	if err != nil {
 		t.Skipf("plugin.Open failed: %v", err)
 	}
-	if !v.Equal(Int64(1)) {
+	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("plugin val: %v", v)
 	}
 }
@@ -51,8 +52,8 @@ func TestPluginMissingAndGarbage(t *testing.T) {
 }
 
 func TestLoadPluginDirect(t *testing.T) {
-	if !pluginsSupported() {
-		_, err := loadPlugin("nope.so")
+	if !runtime.PluginsSupported() {
+		_, err := runtime.LoadPlugin("nope.so")
 		if err == nil {
 			t.Fatal("stub should error")
 		}
@@ -63,7 +64,7 @@ func TestLoadPluginDirect(t *testing.T) {
 	if err := os.WriteFile(so, []byte("xxxx"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := loadPlugin(so); err == nil {
+	if _, err := runtime.LoadPlugin(so); err == nil {
 		t.Fatal("expected loadPlugin error")
 	}
 }

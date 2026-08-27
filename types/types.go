@@ -1,8 +1,10 @@
-package writ
+package types
 
 import (
 	"encoding/json"
 	"strings"
+
+	"deedles.dev/writ/runtime"
 )
 
 type typeKind int
@@ -334,7 +336,7 @@ func (t Type) field(name string) (Type, bool) {
 // PrintType renders t in the checker notation.
 func PrintType(t Type) string { return printType(t, nil) }
 
-func printType(t Type, aliases []typeAlias) string {
+func printType(t Type, aliases []Alias) string {
 	switch t.k {
 	case tyNone:
 		return "none()"
@@ -366,7 +368,7 @@ func printType(t Type, aliases []typeAlias) string {
 		if !t.has {
 			return "symbol()"
 		}
-		return "'" + formatSymName(t.s)
+		return "'" + runtime.FormatSymbol(t.s)
 	case tyUSym:
 		return "unknown_symbol()"
 	case tyEmptyList:
@@ -445,7 +447,7 @@ func printType(t Type, aliases []typeAlias) string {
 	}
 }
 
-func printArrow(ar Arrow, aliases []typeAlias) string {
+func printArrow(ar Arrow, aliases []Alias) string {
 	if !ar.Key {
 		args := make([]string, len(ar.Args))
 		for i, t := range ar.Args {
@@ -463,7 +465,7 @@ func printArrow(ar Arrow, aliases []typeAlias) string {
 	return "(" + strings.Join(keys, " ") + ") -> " + printType(ar.Result, aliases)
 }
 
-func closedLitName(t Type, aliases []typeAlias) string {
+func closedLitName(t Type, aliases []Alias) string {
 	if t.k != tyOr {
 		return ""
 	}
@@ -475,8 +477,8 @@ func closedLitName(t Type, aliases []typeAlias) string {
 		lits = append(lits, x.s)
 	}
 	for _, a := range aliases {
-		if sameStringSet(lits, a.members) {
-			return a.name + "()"
+		if sameStringSet(lits, a.Members) {
+			return a.Name + "()"
 		}
 	}
 	return ""
@@ -980,21 +982,21 @@ func onlyFalsy(t Type) Type {
 	return tOr([]Type{intersect(t, NilType()), intersect(t, FalseType())})
 }
 
-func kindOf(v Value) Type {
-	switch v.k {
-	case KindInt:
+func kindOf(v runtime.Value) Type {
+	switch v.Kind() {
+	case runtime.KindInt:
 		return IntType()
-	case KindFloat:
+	case runtime.KindFloat:
 		return FloatType()
-	case KindString:
-		return ExactString(v.s)
-	case KindSymbol:
-		return ExactSymbol(v.s)
-	case KindList:
-		if v.vec {
+	case runtime.KindString:
+		return ExactString(v.Text())
+	case runtime.KindSymbol:
+		return ExactSymbol(v.Name())
+	case runtime.KindList:
+		if v.IsVec() {
 			var items []Type
-			for _, x := range v.xs {
-				if x.k == KindComment {
+			for _, x := range v.Items() {
+				if x.Kind() == runtime.KindComment {
 					continue
 				}
 				items = append(items, kindOf(x))
@@ -1005,51 +1007,49 @@ func kindOf(v Value) Type {
 			return tTuple(items)
 		}
 		return Any()
-	case KindMap:
-		if v.mp.len() == 0 {
+	case runtime.KindMap:
+		if len(v.Pairs()) == 0 {
 			return EmptyMapType()
 		}
 		var fields []mapField
-		for i, k := range v.mp.keys {
-			fields = append(fields, mapField{name: k, t: kindOf(v.mp.vals[i])})
+		for _, pair := range v.Pairs() {
+			fields = append(fields, mapField{name: pair.Key, t: kindOf(pair.Value)})
 		}
 		return tMap(fields, nil)
-	case KindFn:
+	case runtime.KindFn:
 		return FnType()
-	case KindComment:
+	case runtime.KindComment:
 		return NilType()
-	case KindQuote:
-		return kindOf(v.innerVal())
+	case runtime.KindQuote:
+		return kindOf(v.Inner())
 	default:
 		return Any()
 	}
 }
 
-func collectAliases(v Value, into map[string]string) {
-	switch v.k {
-	case KindQuote, KindUnquote, KindSplice:
-		collectAliases(v.innerVal(), into)
-	case KindMap:
-		if v.mp == nil {
-			return
-		}
-		for i, k := range v.mp.keys {
-			val := v.mp.vals[i]
-			if val.k == KindSymbol && val.s != "true" && val.s != "false" && val.s != "nil" {
-				into[k] = val.s
+func collectAliases(v runtime.Value, into map[string]string) {
+	switch v.Kind() {
+	case runtime.KindQuote, runtime.KindUnquote, runtime.KindSplice:
+		collectAliases(v.Inner(), into)
+	case runtime.KindMap:
+		for _, pair := range v.Pairs() {
+			val := pair.Value
+			if val.Kind() == runtime.KindSymbol && val.Name() != "true" && val.Name() != "false" && val.Name() != "nil" {
+				into[pair.Key] = val.Name()
 			} else {
 				collectAliases(val, into)
 			}
 		}
-	case KindList:
-		for _, x := range v.xs {
+	case runtime.KindList:
+		for _, x := range v.Items() {
 			collectAliases(x, into)
 		}
 	}
 }
 
-type typeAlias struct {
-	name    string
-	t       Type
-	members []string
+// Alias is a named type for display and host domain types.
+type Alias struct {
+	Name    string
+	Type    Type
+	Members []string
 }

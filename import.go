@@ -5,108 +5,55 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"deedles.dev/writ/parser"
+	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/types"
 )
 
-func evalImport(args []Value, env *env, c *ctx) (Value, error) {
-	if len(args) != 1 {
-		return Value{}, errMsg("import needs one path")
-	}
-	v, err := evalVal(args[0], env, c)
-	if err != nil {
-		return Value{}, err
-	}
-	if v.k != KindString {
-		return Value{}, errMsg("import needs a string path")
-	}
-	rt := c.rt
-	if rt == nil {
-		return Value{}, errMsg("import needs a runtime")
-	}
-	return rt.loadImport(v.s, c.file)
-}
-
-func (rt *Runtime) loadImport(spec, fromFile string) (Value, error) {
+func (rt *Runtime) loadImport(spec, fromFile string) (runtime.Value, error) {
 	if pkg, ok := rt.pkgs[spec]; ok {
-		return packageMap(pkg), nil
+		return runtime.PackageValue(pkg), nil
 	}
 	path, kind, err := rt.resolveImport(spec, fromFile)
 	if err != nil {
-		return Value{}, err
+		return runtime.Value{}, err
 	}
 	if kind == "pkg" {
-		return packageMap(rt.pkgs[path]), nil
+		return runtime.PackageValue(rt.pkgs[path]), nil
 	}
-	for _, p := range rt.loading {
-		if p == path {
-			return Value{}, errf("import cycle: %s", strings.Join(append(rt.loading, path), " -> "))
-		}
+	if rt.m.LoadingCycle(path) {
+		return runtime.Value{}, runtime.Errorf("import cycle: %s", strings.Join(append(rt.m.LoadingPath(), path), " -> "))
 	}
-	if loaded, ok := rt.loaded[path]; ok {
-		return loaded.exports, nil
+	if exp, ok := rt.m.Loaded(path); ok {
+		return exp, nil
 	}
 	if kind == "plugin" {
-		if rt.checking || !rt.nativePlugins {
-			return Value{}, errMsg("native plugins are disabled")
+		if rt.m.Checking() || !rt.nativePlugins {
+			return runtime.Value{}, runtime.ErrorMsg("native plugins are disabled")
 		}
-		pkg, err := loadPlugin(path)
+		pkg, err := runtime.LoadPlugin(path)
 		if err != nil {
-			return Value{}, err
+			return runtime.Value{}, err
 		}
-		exp := packageMap(pkg)
-		rt.rememberLoaded(path, &loadedPkg{exports: exp, types: packageType(pkg)})
+		exp := runtime.PackageValue(pkg)
+		rt.m.RememberPackage(path, exp)
 		return exp, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Value{}, err
+		return runtime.Value{}, err
 	}
-	rt.loading = append(rt.loading, path)
-	defer func() { rt.loading = rt.loading[:len(rt.loading)-1] }()
-	prev := rt.file
-	rt.file = path
-	defer func() { rt.file = prev }()
-	forms, err := Parse(string(data))
+	rt.m.PushLoading(path)
+	defer rt.m.PopLoading()
+	prev := rt.m.File()
+	rt.m.SetFile(path)
+	defer rt.m.SetFile(prev)
+	forms, err := parser.Parse(string(data))
 	if err != nil {
-		return Value{}, asError(err).withFile(path)
+		return runtime.Value{}, runtime.AsError(err).WithFile(path)
 	}
-	prog, err := compileForms(forms, rt)
-	if err != nil {
-		return Value{}, asError(err).withFile(path)
-	}
-	env := makeEnv(nil)
-	installFns(prog.Fns, env)
-	macros := toMacroTable(prog.Macros)
-	c := newCtx(rt, env, macros)
-	c.file = path
-	if _, err := evalForms(prog.Boot, env, c); err != nil {
-		return Value{}, asError(err).withFile(path)
-	}
-	names := map[string]Value{}
-	for _, f := range prog.Fns {
-		if v, ok := env.get(f.Name); ok {
-			names[f.Name] = v
-		}
-	}
-	for _, m := range prog.Macros {
-		if _, ok := names[m.Name]; ok {
-			continue
-		}
-		names[m.Name] = makeFnVal(m.Clauses, env)
-	}
-	exp := mapFromNames(names)
-	for i := range prog.Handlers {
-		prog.Handlers[i].env = env
-	}
-	rt.rememberLoaded(path, &loadedPkg{exports: exp, handlers: prog.Handlers, env: env, types: exportMapType(prog)})
-	rt.handlers = append(rt.handlers, prog.Handlers...)
-	return exp, nil
-}
-
-func (rt *Runtime) rememberLoaded(path string, l *loadedPkg) {
-	if _, ok := rt.loaded[path]; !ok {
-		rt.loadedOrder = append(rt.loadedOrder, path)
-	}
-	rt.loaded[path] = l
+	return rt.m.EvalModule(path, forms)
 }
 
 func pluginExt(ext string) bool {
@@ -159,11 +106,11 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 	}
 	ext := strings.ToLower(filepath.Ext(spec))
 	if pluginExt(ext) && !rt.nativePlugins {
-		return "", "", errMsg("native plugins are disabled")
+		return "", "", runtime.ErrorMsg("native plugins are disabled")
 	}
 	absSpec := filepath.IsAbs(spec)
 	if absSpec && !rt.allowAbsolute {
-		return "", "", errMsg("absolute import paths are disabled")
+		return "", "", runtime.ErrorMsg("absolute import paths are disabled")
 	}
 	var candidates []string
 	if fromFile != "" && !absSpec {
@@ -185,7 +132,7 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 		var more []string
 		for _, c := range candidates {
 			more = append(more, c+".writ")
-			if rt.nativePlugins && pluginsSupported() {
+			if rt.nativePlugins && runtime.PluginsSupported() {
 				more = append(more, c+".so", c+".dylib", c+".dll")
 			}
 		}
@@ -226,38 +173,12 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 		}
 	}
 	if pluginExt(ext) {
-		return "", "", errf("plugin not found: %s", spec)
+		return "", "", runtime.Errorf("plugin not found: %s", spec)
 	}
-	return "", "", errf("cannot find import %q", spec)
+	return "", "", runtime.Errorf("cannot find import %q", spec)
 }
 
-func packageMap(p Package) Value {
-	names := map[string]Value{}
-	for name, f := range p.Funcs {
-		fn := f
-		names[name] = Value{k: KindFn, fn: &fnVal{native: fn, name: name}}
-	}
-	for name, v := range p.Vals {
-		names[name] = v
-	}
-	return mapFromNames(names)
-}
-
-func mapFromNames(names map[string]Value) Value {
-	keys := make([]string, 0, len(names))
-	for k := range names {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	pairs := make([]MapPair, len(keys))
-	for i, k := range keys {
-		pairs[i] = MapPair{Key: k, Value: names[k]}
-	}
-	return MapFrom(pairs...)
-}
-
-func packageType(p Package) Type {
-	var fields []mapField
+func packageType(p runtime.Package) types.Type {
 	keys := make([]string, 0, len(p.Funcs)+len(p.Vals))
 	seen := map[string]struct{}{}
 	for k := range p.Funcs {
@@ -270,65 +191,31 @@ func packageType(p Package) Type {
 		}
 	}
 	sort.Strings(keys)
+	fields := make([]types.ArrowKey, 0, len(keys))
 	for _, k := range keys {
-		t := Any()
-		if p.Types != nil {
-			if tt, ok := p.Types[k]; ok {
-				t = tt
-			}
-		} else if _, ok := p.Funcs[k]; ok {
-			t = FnType(PosRestArrow(tDyn(Any())))
+		t := types.Any()
+		if _, ok := p.Funcs[k]; ok {
+			t = types.FnType(types.PosRestArrow(types.Dynamic(types.Any())))
 		}
-		fields = append(fields, mapField{name: k, t: t})
+		fields = append(fields, types.ArrowKey{Name: k, Type: t})
 	}
-	if len(fields) == 0 {
-		return EmptyMapType()
-	}
-	return tMap(fields, nil)
+	return types.MapType(fields, nil)
 }
 
-func exportMapType(prog program) Type {
-	var fields []mapField
-	seen := map[string]struct{}{}
-	var names []string
-	for _, f := range prog.Fns {
-		if _, ok := seen[f.Name]; ok {
-			continue
-		}
-		seen[f.Name] = struct{}{}
-		names = append(names, f.Name)
-	}
-	for _, m := range prog.Macros {
-		if _, ok := seen[m.Name]; ok {
-			continue
-		}
-		seen[m.Name] = struct{}{}
-		names = append(names, m.Name)
-	}
-	sort.Strings(names)
-	for _, n := range names {
-		fields = append(fields, mapField{name: n, t: tDyn(Any())})
-	}
-	if len(fields) == 0 {
-		return EmptyMapType()
-	}
-	return tMap(fields, nil)
-}
-
-func (rt *Runtime) importType(spec, fromFile string) (Type, []Diagnostic, error) {
+func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagnostic, error) {
 	if pkg, ok := rt.pkgs[spec]; ok {
 		return packageType(pkg), nil, nil
 	}
 	path, kind, err := rt.resolveImport(spec, fromFile)
 	if err != nil {
-		return Type{}, nil, err
+		return types.Type{}, nil, err
 	}
 	if kind == "pkg" {
 		return packageType(rt.pkgs[path]), nil, nil
 	}
 	for _, p := range rt.checkLoading {
 		if p == path {
-			return Type{}, nil, errf("import cycle: %s", spec)
+			return types.Type{}, nil, runtime.Errorf("import cycle: %s", spec)
 		}
 	}
 	if rt.exportCache != nil {
@@ -336,39 +223,36 @@ func (rt *Runtime) importType(spec, fromFile string) (Type, []Diagnostic, error)
 			return e.t, prefixImportDiags(path, e.diags), nil
 		}
 	}
-	if loaded, ok := rt.loaded[path]; ok && loaded.types.k != 0 {
-		return loaded.types, nil, nil
-	}
 	if kind == "plugin" {
-		anyT := Any()
-		return tDyn(tMap(nil, &anyT)), nil, nil
+		anyT := types.Any()
+		return types.Dynamic(types.MapType(nil, &anyT)), nil, nil
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Type{}, nil, err
+		return types.Type{}, nil, err
 	}
-	prev := rt.file
-	rt.file = path
+	prev := rt.m.File()
+	rt.m.SetFile(path)
 	res := rt.checkSrc(string(data), path)
-	rt.file = prev
+	rt.m.SetFile(prev)
 	diags := prefixImportDiags(path, res.Diagnostics)
 	for _, d := range res.Diagnostics {
 		if strings.Contains(d.Message, "cycle") {
-			return Type{}, diags, errMsg(path + ": " + d.Message)
+			return types.Type{}, diags, runtime.ErrorMsg(path + ": " + d.Message)
 		}
 	}
 	if e, ok := rt.exportCache[path]; ok {
 		return e.t, diags, nil
 	}
-	anyT := Any()
-	return tDyn(tMap(nil, &anyT)), diags, nil
+	anyT := types.Any()
+	return types.Dynamic(types.MapType(nil, &anyT)), diags, nil
 }
 
-func prefixImportDiags(path string, diags []Diagnostic) []Diagnostic {
+func prefixImportDiags(path string, diags []types.Diagnostic) []types.Diagnostic {
 	if len(diags) == 0 {
 		return nil
 	}
-	out := make([]Diagnostic, len(diags))
+	out := make([]types.Diagnostic, len(diags))
 	for i, d := range diags {
 		if path != "" && !strings.HasPrefix(d.Message, path) {
 			d.Message = path + ": " + d.Message

@@ -1,13 +1,14 @@
 package writ
 
 import (
+	"deedles.dev/writ/runtime"
 	"math/big"
 	"strings"
 	"testing"
 	"time"
 )
 
-func evals(t *testing.T, src string) Value {
+func evals(t *testing.T, src string) runtime.Value {
 	t.Helper()
 	rt := New()
 	v, err := rt.Eval(src)
@@ -27,22 +28,22 @@ func evalErr(t *testing.T, src string) error {
 }
 
 func TestEvalArithIntFloat(t *testing.T) {
-	if v := evals(t, "(+ 1 2)"); v.Kind() != KindInt || v.BigInt().Int64() != 3 {
+	if v := evals(t, "(+ 1 2)"); v.Kind() != runtime.KindInt || v.BigInt().Int64() != 3 {
 		t.Fatalf("+ int: %v", v)
 	}
-	if v := evals(t, "(+ 1 2.0)"); v.Kind() != KindFloat || v.Float64() != 3 {
+	if v := evals(t, "(+ 1 2.0)"); v.Kind() != runtime.KindFloat || v.Float64() != 3 {
 		t.Fatalf("+ mix: %v", v)
 	}
-	if v := evals(t, "(*)"); !v.Equal(Int64(1)) {
+	if v := evals(t, "(*)"); !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("* empty: %v", v)
 	}
-	if v := evals(t, "(+)"); !v.Equal(Int64(0)) {
+	if v := evals(t, "(+)"); !v.Equal(runtime.Int64(0)) {
 		t.Fatalf("+ empty: %v", v)
 	}
-	if v := evals(t, "(/ 6 2)"); v.Kind() != KindInt || v.BigInt().Int64() != 3 {
+	if v := evals(t, "(/ 6 2)"); v.Kind() != runtime.KindInt || v.BigInt().Int64() != 3 {
 		t.Fatalf("/ even: %v", v)
 	}
-	if v := evals(t, "(/ 5 2)"); v.Kind() != KindFloat || v.Float64() != 2.5 {
+	if v := evals(t, "(/ 5 2)"); v.Kind() != runtime.KindFloat || v.Float64() != 2.5 {
 		t.Fatalf("/ uneven: %v", v)
 	}
 	if err := evalErr(t, "(/ 1 0)"); !strings.Contains(err.Error(), "zero") {
@@ -57,10 +58,10 @@ func TestEvalArithIntFloat(t *testing.T) {
 	if err := evalErr(t, "(mod 1 0)"); !strings.Contains(err.Error(), "zero") {
 		t.Fatalf("mod 0: %v", err)
 	}
-	if v := evals(t, "(mod 7 3)"); !v.Equal(Int64(1)) {
+	if v := evals(t, "(mod 7 3)"); !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("mod: %v", v)
 	}
-	if v := evals(t, "(* 10 20 30)"); !v.Equal(Int64(6000)) {
+	if v := evals(t, "(* 10 20 30)"); !v.Equal(runtime.Int64(6000)) {
 		t.Fatalf("*: %v", v)
 	}
 	bigv := evals(t, "(* 1000000000000 1000000000000)")
@@ -100,25 +101,25 @@ func TestEvalCompareAndPred(t *testing.T) {
 
 func TestEvalListsMaps(t *testing.T) {
 	v := evals(t, "(first [1 2 3])")
-	if !v.Equal(Int64(1)) {
+	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("first: %v", v)
 	}
 	v = evals(t, `(get [a: 1 b: "x"] "a")`)
-	if !v.Equal(Int64(1)) {
+	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("get: %v", v)
 	}
 	v = evals(t, `(get [a: [b: 2]] ["a" "b"])`)
-	if !v.Equal(Int64(2)) {
+	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("get path: %v", v)
 	}
 	v = evals(t, `(set [:] "k" 1)`)
 	got, _ := v.MapGet("k")
-	if !got.Equal(Int64(1)) {
+	if !got.Equal(runtime.Int64(1)) {
 		t.Fatalf("set: %v", v)
 	}
 	v = evals(t, `(merge [a: 1] [b: 2 a: 3])`)
 	a, _ := v.MapGet("a")
-	if !a.Equal(Int64(3)) {
+	if !a.Equal(runtime.Int64(3)) {
 		t.Fatalf("merge: %v", v)
 	}
 	v = evals(t, `(from-pairs [["x" 1] ["y" 2]])`)
@@ -136,19 +137,19 @@ func TestEvalNthSymbols(t *testing.T) {
 
 func TestEvalFnShortLong(t *testing.T) {
 	v := evals(t, "((fn (+ #1 1)) 4)")
-	if !v.Equal(Int64(5)) {
+	if !v.Equal(runtime.Int64(5)) {
 		t.Fatalf("short fn: %v", v)
 	}
 	v = evals(t, "((fn + #1 1) 4)")
-	if !v.Equal(Int64(5)) {
+	if !v.Equal(runtime.Int64(5)) {
 		t.Fatalf("short fn call wrap: %v", v)
 	}
 	v = evals(t, "((fn (nil) 0 fn (n) (+ n 1)) 9)")
-	if !v.Equal(Int64(10)) {
+	if !v.Equal(runtime.Int64(10)) {
 		t.Fatalf("long fn: %v", v)
 	}
 	v = evals(t, "((fn (nil) 0 fn (n) (+ n 1)) nil)")
-	if !v.Equal(Int64(0)) {
+	if !v.Equal(runtime.Int64(0)) {
 		t.Fatalf("clause lit: %v", v)
 	}
 }
@@ -160,14 +161,14 @@ func TestEvalDefClauses(t *testing.T) {
 (f 5)
 `
 	v := evals(t, src)
-	if !v.Equal(Int64(120)) {
+	if !v.Equal(runtime.Int64(120)) {
 		t.Fatalf("fact: %v", v)
 	}
 }
 
 func TestEvalLetIfAndOr(t *testing.T) {
 	v := evals(t, `(let [x: 2 y: 3] (+ x y))`)
-	if !v.Equal(Int64(5)) {
+	if !v.Equal(runtime.Int64(5)) {
 		t.Fatalf("let: %v", v)
 	}
 	v = evals(t, `(if nil 1 2)`)
@@ -175,11 +176,11 @@ func TestEvalLetIfAndOr(t *testing.T) {
 		t.Fatalf("if nil: %v", v)
 	}
 	v = evals(t, `(if nil 1 else 2)`)
-	if !v.Equal(Int64(2)) {
+	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("if else: %v", v)
 	}
 	v = evals(t, `(if not false 9)`)
-	if !v.Equal(Int64(9)) {
+	if !v.Equal(runtime.Int64(9)) {
 		t.Fatalf("if not: %v", v)
 	}
 	v = evals(t, `(and 1 false 3)`)
@@ -187,7 +188,7 @@ func TestEvalLetIfAndOr(t *testing.T) {
 		t.Fatalf("and: %v", v)
 	}
 	v = evals(t, `(or nil false 7)`)
-	if !v.Equal(Int64(7)) {
+	if !v.Equal(runtime.Int64(7)) {
 		t.Fatalf("or: %v", v)
 	}
 }
@@ -198,26 +199,26 @@ func TestEvalPipe(t *testing.T) {
   (map (fn * #1 2))
   (reduce 0 (fn + #1 #2)))
 `)
-	if !v.Equal(Int64(12)) {
+	if !v.Equal(runtime.Int64(12)) {
 		t.Fatalf("pipe: %v", v)
 	}
 }
 
 func TestEvalQuoteEval(t *testing.T) {
 	v := evals(t, "(eval '(+ 1 2))")
-	if !v.Equal(Int64(3)) {
+	if !v.Equal(runtime.Int64(3)) {
 		t.Fatalf("eval quote: %v", v)
 	}
 	v = evals(t, "(eval [1 2])")
-	if v.Kind() != KindList || !v.IsVec() {
+	if v.Kind() != runtime.KindList || !v.IsVec() {
 		t.Fatalf("eval vec: %v", v)
 	}
 	v = evals(t, `'(a ,(+ 1 2))`)
-	if v.Kind() != KindList || len(v.Items()) != 2 || !v.Items()[1].Equal(Int64(3)) {
+	if v.Kind() != runtime.KindList || len(v.Items()) != 2 || !v.Items()[1].Equal(runtime.Int64(3)) {
 		t.Fatalf("unquote: %v", v)
 	}
 	v = evals(t, `(+ 1 @[2 3])`)
-	if !v.Equal(Int64(6)) {
+	if !v.Equal(runtime.Int64(6)) {
 		t.Fatalf("splice: %v", v)
 	}
 	evalErr(t, ",x")
@@ -229,7 +230,7 @@ func TestEvalMacros(t *testing.T) {
   (cons 'if (cons 'not (cons test body))))
 (unless false 42)
 `)
-	if !v.Equal(Int64(42)) {
+	if !v.Equal(runtime.Int64(42)) {
 		t.Fatalf("unless: %v", v)
 	}
 }
@@ -241,7 +242,7 @@ func TestEvalMacroHygiene(t *testing.T) {
 (let [x: 9]
   (with-x x))
 `)
-	if !v.Equal(Int64(9)) {
+	if !v.Equal(runtime.Int64(9)) {
 		t.Fatalf("hygiene want 9 (call-site x), got %v", v)
 	}
 }
@@ -252,7 +253,7 @@ func TestEvalLetBang(t *testing.T) {
   '(let! [x: 1] ,body))
 (bind-x x)
 `)
-	if !v.Equal(Int64(1)) {
+	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("let!: %v", v)
 	}
 }
@@ -266,19 +267,19 @@ func TestEvalProps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(Int64(2)) {
+	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("get-prop: %v", v)
 	}
 	if _, err := rt.Eval(`(update-prop "hits" (fn + #1 3))`); err != nil {
 		t.Fatal(err)
 	}
-	if !rt.GetProp("hits").Equal(Int64(3)) {
+	if !rt.GetProp("hits").Equal(runtime.Int64(3)) {
 		t.Fatalf("update-prop store: %v", rt.GetProp("hits"))
 	}
 	if _, err := rt.Eval(`(set-prop ["a" "b"] 1)`); err != nil {
 		t.Fatal(err)
 	}
-	if !rt.GetProp("a", "b").Equal(Int64(1)) {
+	if !rt.GetProp("a", "b").Equal(runtime.Int64(1)) {
 		t.Fatalf("nested: %v", rt.GetProp("a", "b"))
 	}
 }
@@ -308,7 +309,7 @@ func TestEvalKeywordClauses(t *testing.T) {
 (def (f a: b:) 2)
 (f a: 9)
 `)
-	if !v.Equal(Int64(1)) {
+	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("kw one key: %v", v)
 	}
 	v = evals(t, `
@@ -316,7 +317,7 @@ func TestEvalKeywordClauses(t *testing.T) {
 (def (f a: b:) 2)
 (f a: 9 b: 8)
 `)
-	if !v.Equal(Int64(2)) {
+	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("kw two keys: %v", v)
 	}
 }
@@ -342,19 +343,19 @@ func TestMacroMapKeysNotRenamed(t *testing.T) {
 
 func TestElseIf(t *testing.T) {
 	v := evals(t, `(if false 1 else if true 2 else 3)`)
-	if !v.Equal(Int64(2)) {
+	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("else if taken: %v", v)
 	}
 	v = evals(t, `(if false 1 else if false 2 else 3)`)
-	if !v.Equal(Int64(3)) {
+	if !v.Equal(runtime.Int64(3)) {
 		t.Fatalf("else if skipped: %v", v)
 	}
 	v = evals(t, `(if true 1 else if true 2 else 3)`)
-	if !v.Equal(Int64(1)) {
+	if !v.Equal(runtime.Int64(1)) {
 		t.Fatalf("first branch: %v", v)
 	}
 	v = evals(t, `(if false 1 else if not false 4 else 5)`)
-	if !v.Equal(Int64(4)) {
+	if !v.Equal(runtime.Int64(4)) {
 		t.Fatalf("else if not: %v", v)
 	}
 }
@@ -408,7 +409,7 @@ func TestAfterScheduler(t *testing.T) {
 
 func TestMapFilterReduce(t *testing.T) {
 	v := evals(t, `(map [1 2 3] (fn * #1 10))`)
-	if len(v.Items()) != 3 || !v.Items()[1].Equal(Int64(20)) {
+	if len(v.Items()) != 3 || !v.Items()[1].Equal(runtime.Int64(20)) {
 		t.Fatalf("map: %v", v)
 	}
 	v = evals(t, `(filter [1 2 3 4] (fn = (mod #1 2) 0))`)
@@ -416,7 +417,7 @@ func TestMapFilterReduce(t *testing.T) {
 		t.Fatalf("filter: %v", v)
 	}
 	v = evals(t, `(reduce [1 2 3] 0 (fn + #1 #2))`)
-	if !v.Equal(Int64(6)) {
+	if !v.Equal(runtime.Int64(6)) {
 		t.Fatalf("reduce: %v", v)
 	}
 	v = evals(t, `(map [a: 1] (fn first #1))`)
