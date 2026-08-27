@@ -3,6 +3,8 @@ package repl
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -18,61 +20,81 @@ const (
 	contPrompt = "... "
 )
 
-// Options configures [Run].
-type Options struct {
+// REPL evaluates forms from In until EOF or the context is cancelled.
+type REPL struct {
 	In  io.Reader
 	Out io.Writer
 	Err io.Writer
 	RT  *writ.Runtime
+	// HistoryFile is the readline history path. Empty uses the user
+	// config directory. Readline is used only when In is a terminal.
+	HistoryFile string
 }
 
-// Run reads forms from In until EOF and evaluates them. One Runtime is
-// used for the whole session. Parse and eval errors are written to Err
-// and the session continues. EOF returns nil.
-func Run(opts Options) error {
-	in := opts.In
+// Run reads forms until EOF or ctx is done. One Runtime is used for the
+// session. Parse and eval errors are written to Err and the session
+// continues. EOF returns nil. Cancelled ctx returns ctx.Err().
+func (r REPL) Run(ctx context.Context) error {
+	in := r.In
 	if in == nil {
 		in = os.Stdin
 	}
-	out := opts.Out
+	out := r.Out
 	if out == nil {
 		out = os.Stdout
 	}
-	errW := opts.Err
+	errW := r.Err
 	if errW == nil {
 		errW = os.Stderr
 	}
-	rt := opts.RT
+	rt := r.RT
 	if rt == nil {
 		rt = writ.New(writ.WithStdout(out))
 		rt.RegisterPrint()
 	}
 
-	sc := bufio.NewScanner(in)
+	rd, err := newLineReader(in, out, errW, r.HistoryFile)
+	if err != nil {
+		return err
+	}
+	defer rd.Close()
+
+	stop := context.AfterFunc(ctx, func() { _ = rd.Close() })
+	defer stop()
+
 	var buf strings.Builder
 	cont := false
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		p := prompt
 		if cont {
 			p = contPrompt
 		}
-		if _, err := io.WriteString(out, p); err != nil {
+		line, err := rd.ReadLine(p)
+		if err != nil {
+			if errors.Is(err, errInterrupt) {
+				buf.Reset()
+				cont = false
+				continue
+			}
+			if errors.Is(err, io.EOF) || ctx.Err() != nil {
+				if buf.Len() > 0 {
+					fmt.Fprintln(errW, "incomplete input")
+				}
+				if ctx.Err() != nil {
+					return ctx.Err()
+				}
+				_, _ = io.WriteString(out, "\n")
+				return nil
+			}
 			return err
-		}
-		if !sc.Scan() {
-			if err := sc.Err(); err != nil {
-				return err
-			}
-			if buf.Len() > 0 {
-				fmt.Fprintln(errW, "incomplete input")
-			}
-			_, _ = io.WriteString(out, "\n")
-			return nil
 		}
 		if buf.Len() > 0 {
 			buf.WriteByte('\n')
 		}
-		buf.WriteString(sc.Text())
+		buf.WriteString(line)
 		src := buf.String()
 		forms, err := parser.Parse(src)
 		if err != nil {
@@ -106,4 +128,35 @@ func skipResult(forms []runtime.Value) bool {
 		}
 	}
 	return true
+}
+
+type lineReader interface {
+	ReadLine(prompt string) (string, error)
+	Close() error
+}
+
+var errInterrupt = errors.New("interrupt")
+
+type scanReader struct {
+	sc  *bufio.Scanner
+	out io.Writer
+}
+
+func (s *scanReader) ReadLine(prompt string) (string, error) {
+	if _, err := io.WriteString(s.out, prompt); err != nil {
+		return "", err
+	}
+	if !s.sc.Scan() {
+		if err := s.sc.Err(); err != nil {
+			return "", err
+		}
+		return "", io.EOF
+	}
+	return s.sc.Text(), nil
+}
+
+func (s *scanReader) Close() error { return nil }
+
+func newScanReader(in io.Reader, out io.Writer) *scanReader {
+	return &scanReader{sc: bufio.NewScanner(in), out: out}
 }

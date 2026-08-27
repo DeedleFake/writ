@@ -21,7 +21,7 @@ writ fmt -w FILE.writ       # rewrite the file
 writ check FILE.writ        # type-check; non-zero exit on error
 ```
 
-With no arguments, `writ` starts a REPL (`writ repl` is the same). Unclosed `(`, `[`, strings, and tick symbols continue on the next line. `-I DIR` sets the import search path, as with `writ run`, and is valid on `writ` or `writ repl`.
+With no arguments, `writ` starts a REPL (`writ repl` is the same). Unclosed `(`, `[`, strings, and tick symbols continue on the next line. `-I DIR` sets the import search path, as with `writ run`, and is valid on `writ` or `writ repl`. When stdin is a terminal, the REPL uses line editing, history, and tab completion of keywords and builtins. History is stored under the user config directory.
 
 `writ run` evaluates top-level forms, then calls `main` if it was defined. The CLI registers `print`, which writes to stdout.
 

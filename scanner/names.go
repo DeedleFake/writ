@@ -1,9 +1,27 @@
 package scanner
 
+import "slices"
+
 // IsKeyword reports whether name is a special form.
 func IsKeyword(name string) bool {
 	_, ok := keywords[name]
 	return ok
+}
+
+// Words returns keywords and builtins, sorted, for completion.
+func Words() []string {
+	out := make([]string, 0, len(keywords)+len(builtins))
+	for k := range keywords {
+		out = append(out, k)
+	}
+	for k := range builtins {
+		if _, ok := keywords[k]; ok {
+			continue
+		}
+		out = append(out, k)
+	}
+	slices.Sort(out)
+	return out
 }
 
 // IsBuiltin reports whether name is a core builtin (including true/false/nil).

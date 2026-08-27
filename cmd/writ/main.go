@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -60,12 +61,12 @@ func cmdRepl(args []string) error {
 	}
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
-	return repl.Run(repl.Options{
+	return (repl.REPL{
 		In:  os.Stdin,
 		Out: os.Stdout,
 		Err: os.Stderr,
 		RT:  rt,
-	})
+	}).Run(context.Background())
 }
 
 func parseFileAndSearch(args []string) (file string, search []string, err error) {

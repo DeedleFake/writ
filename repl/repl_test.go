@@ -2,6 +2,8 @@ package repl
 
 import (
 	"bytes"
+	"context"
+	"io"
 	"strings"
 	"testing"
 )
@@ -9,7 +11,7 @@ import (
 func runRepl(t *testing.T, in string) (stdout, stderr string, err error) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	err = Run(Options{In: strings.NewReader(in), Out: &out, Err: &errb})
+	err = (REPL{In: strings.NewReader(in), Out: &out, Err: &errb}).Run(context.Background())
 	return out.String(), errb.String(), err
 }
 
@@ -101,5 +103,18 @@ func TestRunEOFIncomplete(t *testing.T) {
 	}
 	if !strings.Contains(errb, "incomplete") {
 		t.Fatalf("stderr %q", errb)
+	}
+}
+
+func TestRunCancelled(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := (REPL{
+		In:  strings.NewReader("(+ 1 2)\n"),
+		Out: io.Discard,
+		Err: io.Discard,
+	}).Run(ctx)
+	if err != context.Canceled {
+		t.Fatalf("got %v", err)
 	}
 }
