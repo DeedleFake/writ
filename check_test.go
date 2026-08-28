@@ -413,6 +413,32 @@ func TestCheckKeyedImport(t *testing.T) {
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("host io.write: %v", res.Diagnostics)
 	}
+
+	if err := os.WriteFile(filepath.Join(dir, "priv.writ"), []byte("(def (-h n) n)\n(def (f n) n)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	privUse := filepath.Join(dir, "privuse.writ")
+	if err := os.WriteFile(privUse, []byte("(import p: \"priv.writ\")\n(p.f 1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res = New().CheckFile(privUse)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("public: %v", res.Diagnostics)
+	}
+	privBad := filepath.Join(dir, "privbad.writ")
+	if err := os.WriteFile(privBad, []byte("(import p: \"priv.writ\")\n(p.-h 1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res = New().CheckFile(privBad)
+	found = false
+	for _, d := range res.Diagnostics {
+		if strings.Contains(d.Message, "unknown field") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("private field: %v", res.Diagnostics)
+	}
 }
 
 func TestCheckImportedMacros(t *testing.T) {

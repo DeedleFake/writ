@@ -1897,6 +1897,9 @@ func exportCheckedType(prog runtime.Program, chk *checker) Type {
 	var names []string
 	types := map[string]Type{}
 	for _, f := range prog.Fns {
+		if !runtime.Exported(f.Name) {
+			continue
+		}
 		if _, ok := seen[f.Name]; ok {
 			continue
 		}
@@ -1909,6 +1912,9 @@ func exportCheckedType(prog runtime.Program, chk *checker) Type {
 		}
 	}
 	for _, m := range prog.Macros {
+		if !runtime.Exported(m.Name) {
+			continue
+		}
 		if _, ok := seen[m.Name]; ok {
 			continue
 		}

@@ -280,11 +280,17 @@ func (m *Machine) EvalModule(path string, forms []Value) (Value, error) {
 	}
 	names := map[string]Value{}
 	for _, f := range prog.Fns {
+		if !Exported(f.Name) {
+			continue
+		}
 		if v, ok := env.get(f.Name); ok {
 			names[f.Name] = v
 		}
 	}
 	for _, mac := range prog.Macros {
+		if !Exported(mac.Name) {
+			continue
+		}
 		if _, ok := names[mac.Name]; ok {
 			continue
 		}
@@ -470,6 +476,12 @@ func PackageValue(p Package) Value {
 		names[name] = v
 	}
 	return mapFromNames(names)
+}
+
+// Exported reports whether a top-level def/defm name is in a module export map.
+// Names that start with '-' are private to the defining script.
+func Exported(name string) bool {
+	return name != "" && name[0] != '-'
 }
 
 func mapFromNames(names map[string]Value) Value {

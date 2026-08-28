@@ -854,6 +854,70 @@ func TestEvalKeyedImport(t *testing.T) {
 	}
 }
 
+func TestEvalPrivateExport(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lib.writ"), []byte(`
+(def (-helper n) (* n 2))
+(def (double n) (-helper n))
+(defm (-unless test @body)
+  (cons 'if (cons 'not (cons test body))))
+(defm (unless test @body)
+  (cons 'if (cons 'not (cons test body))))
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	use := filepath.Join(dir, "use.writ")
+	if err := os.WriteFile(use, []byte("(import lib: \"lib.writ\")\n(lib.double 21)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := New().EvalFile(use)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(42)) {
+		t.Fatalf("public uses private: %v", v)
+	}
+	miss := filepath.Join(dir, "miss.writ")
+	if err := os.WriteFile(miss, []byte("(import lib: \"lib.writ\")\nlib.-helper\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New().EvalFile(miss)
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("private fn: %v", err)
+	}
+	mac := filepath.Join(dir, "mac.writ")
+	if err := os.WriteFile(mac, []byte("(import lib: \"lib.writ\")\n(lib.unless false 3)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err = New().EvalFile(mac)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(3)) {
+		t.Fatalf("public macro: %v", v)
+	}
+	privMac := filepath.Join(dir, "privmac.writ")
+	if err := os.WriteFile(privMac, []byte("(import lib: \"lib.writ\")\n(lib.-unless false 1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New().EvalFile(privMac)
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("private macro: %v", err)
+	}
+
+	same := filepath.Join(dir, "same.writ")
+	if err := os.WriteFile(same, []byte("(def (-h) 9)\n(-h)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err = New().EvalFile(same)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(9)) {
+		t.Fatalf("private in file: %v", v)
+	}
+}
+
 func TestEvalDottedHygiene(t *testing.T) {
 	v := evals(t, `
 (defm (m)
