@@ -55,12 +55,11 @@ type mapField struct {
 
 // Arrow is one function clause type.
 type Arrow struct {
-	Key       bool
-	Args      []Type
-	Keys      []ArrowKey
-	Rest      bool
-	Result    Type
-	restTyped bool
+	Key    bool
+	Args   []Type
+	Keys   []ArrowKey
+	Rest   bool
+	Result Type
 }
 
 // ArrowKey is a keyword argument type.

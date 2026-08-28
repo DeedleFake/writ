@@ -12,17 +12,6 @@ func posArgs(name string, call callParts) ([]Value, error) {
 	return call.pos, nil
 }
 
-func asNum(v Value, ctx string) (kind Kind, i *big.Int, f float64, err error) {
-	switch v.k {
-	case KindInt:
-		return KindInt, v.asBig(), 0, nil
-	case KindFloat:
-		return KindFloat, nil, v.floatVal(), nil
-	default:
-		return 0, nil, 0, errf("%s needs a number", ctx)
-	}
-}
-
 func asFloat(v Value, ctx string) (float64, error) {
 	f, ok := v.AsFloat64()
 	if !ok {

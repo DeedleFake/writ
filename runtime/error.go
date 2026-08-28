@@ -52,11 +52,6 @@ func errAt(start, end int, msg string) *Error {
 	return &Error{Start: start, End: end, Message: msg}
 }
 
-func errAtf(start, end int, format string, args ...any) *Error {
-	e := errAt(start, end, fmt.Sprintf(format, args...))
-	return e
-}
-
 func errVal(v Value, msg string) *Error {
 	s, e := v.srcSpan().Start, v.srcSpan().End
 	if e == 0 && s == 0 && !v.HasSpan() {

@@ -840,12 +840,6 @@ func intFloatEqual(i Value, f float64) bool {
 	return bf.Cmp(ff) == 0
 }
 
-func cloneList(xs []Value, vec bool) Value {
-	out := make([]Value, len(xs))
-	copy(out, xs)
-	return listVal(out, vec)
-}
-
 // Comment returns a comment form. text is the source including ';'.
 func Comment(text string) Value {
 	return Value{k: KindComment, s: text}

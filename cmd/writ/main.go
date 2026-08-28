@@ -40,7 +40,7 @@ func run(args []string) error {
 		if args[0] != "" && args[0][0] == '-' {
 			return cmdRepl(args)
 		}
-		return fmt.Errorf("writ %s: unknown command\nRun 'writ help' for usage.", args[0])
+		return fmt.Errorf("writ %s: unknown command; run 'writ help' for usage", args[0])
 	}
 }
 
@@ -104,7 +104,7 @@ func cmdHelp(args []string) error {
 	}
 	text, ok := commandHelp[args[0]]
 	if !ok {
-		return fmt.Errorf("writ help %s: unknown help topic. Run 'writ help'.", args[0])
+		return fmt.Errorf("writ help %s: unknown help topic; run 'writ help'", args[0])
 	}
 	fmt.Fprint(os.Stdout, text)
 	return nil
@@ -123,7 +123,7 @@ func parseFlags(fs *flag.FlagSet, args []string, topic string) (ok bool, err err
 			fmt.Fprint(os.Stdout, commandHelp[topic])
 			return false, nil
 		}
-		return false, fmt.Errorf("%v\nRun 'writ help %s' for usage.", err, topic)
+		return false, fmt.Errorf("%v; run 'writ help %s' for usage", err, topic)
 	}
 	return true, nil
 }
@@ -155,7 +155,7 @@ func cmdRepl(args []string) error {
 		return nil
 	}
 	if fs.NArg() != 0 {
-		return fmt.Errorf("repl: unexpected %s\nRun 'writ help repl' for usage.", fs.Arg(0))
+		return fmt.Errorf("repl: unexpected %s; run 'writ help repl' for usage", fs.Arg(0))
 	}
 	opts := withSearch([]writ.Option{writ.WithStdout(os.Stdout)}, *search)
 	rt := writ.New(opts...)
@@ -179,7 +179,7 @@ func cmdRun(args []string) error {
 		return nil
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: writ run [-I directory] FILE.writ\nRun 'writ help run' for usage.")
+		return fmt.Errorf("usage: writ run [-I directory] FILE.writ; run 'writ help run' for usage")
 	}
 	file := fs.Arg(0)
 	opts := withSearch([]writ.Option{writ.WithStdout(os.Stdout)}, *search)
@@ -206,7 +206,7 @@ func cmdFmt(args []string) error {
 		return nil
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: writ fmt [-w] FILE.writ\nRun 'writ help fmt' for usage.")
+		return fmt.Errorf("usage: writ fmt [-w] FILE.writ; run 'writ help fmt' for usage")
 	}
 	file := fs.Arg(0)
 	data, err := os.ReadFile(file)
@@ -273,7 +273,7 @@ func cmdCheck(args []string) error {
 		return nil
 	}
 	if fs.NArg() != 1 {
-		return fmt.Errorf("usage: writ check [-I directory] FILE.writ\nRun 'writ help check' for usage.")
+		return fmt.Errorf("usage: writ check [-I directory] FILE.writ; run 'writ help check' for usage")
 	}
 	file := fs.Arg(0)
 	data, err := os.ReadFile(file)

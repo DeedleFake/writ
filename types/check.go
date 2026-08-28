@@ -131,10 +131,7 @@ func (chk *checker) noteParams(form runtime.Value, env typeEnv) {
 		if p.Kind() != runtime.KindSymbol {
 			continue
 		}
-		name := p.Name()
-		if strings.HasSuffix(name, ":") {
-			name = name[:len(name)-1]
-		}
+		name := strings.TrimSuffix(p.Name(), ":")
 		if t, ok := env[name]; ok {
 			chk.note(p, t, name)
 		}
