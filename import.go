@@ -3,6 +3,7 @@ package writ
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 
@@ -213,10 +214,8 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 	if kind == "pkg" {
 		return packageType(rt.pkgs[path]), nil, nil
 	}
-	for _, p := range rt.checkLoading {
-		if p == path {
-			return types.Type{}, nil, runtime.Errorf("import cycle: %s", spec)
-		}
+	if slices.Contains(rt.checkLoading, path) {
+		return types.Type{}, nil, runtime.Errorf("import cycle: %s", spec)
 	}
 	if rt.exportCache != nil {
 		if e, ok := rt.exportCache[path]; ok {

@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -384,13 +386,9 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 	installFns(fns, env)
 	macroTable := map[string][]Clause{}
 	if session && rt != nil {
-		for k, v := range rt.macros {
-			macroTable[k] = v
-		}
+		maps.Copy(macroTable, rt.macros)
 	}
-	for k, v := range toMacroTable(macros) {
-		macroTable[k] = v
-	}
+	maps.Copy(macroTable, toMacroTable(macros))
 	c := newCtx(rt, env, macroTable)
 
 	expandBody := func(clauses []Clause) error {
@@ -967,32 +965,17 @@ func hasNestedFn(args []Value) bool {
 			if isFnCall(v) {
 				return true
 			}
-			for _, x := range v.Items() {
-				if walk(x) {
-					return true
-				}
-			}
-			return false
+			return slices.ContainsFunc(v.Items(), walk)
 		case KindMap:
 			if v.mapData() == nil {
 				return false
 			}
-			for _, x := range v.mapData().vals {
-				if walk(x) {
-					return true
-				}
-			}
-			return false
+			return slices.ContainsFunc(v.mapData().vals, walk)
 		default:
 			return false
 		}
 	}
-	for _, a := range args {
-		if walk(a) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(args, walk)
 }
 
 func slotParams(n int) Params {
@@ -1143,12 +1126,7 @@ func ParseIfArgs(args []Value) ([]IfClause, error) {
 }
 
 func containsStr(xs []string, s string) bool {
-	for _, x := range xs {
-		if x == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(xs, s)
 }
 
 func makeFnVal(clauses []Clause, env *env) Value {

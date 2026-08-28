@@ -1,6 +1,8 @@
 package runtime
 
 import (
+	"maps"
+	"slices"
 	"sort"
 	"sync"
 	"time"
@@ -243,9 +245,7 @@ func (m *Machine) EvalLocked(forms []Value) (Value, error) {
 	if m.macros == nil {
 		m.macros = map[string][]Clause{}
 	}
-	for name, clauses := range toMacroTable(prog.Macros) {
-		m.macros[name] = clauses
-	}
+	maps.Copy(m.macros, toMacroTable(prog.Macros))
 	for i := range prog.Handlers {
 		prog.Handlers[i].env = env
 	}
@@ -328,12 +328,7 @@ func (m *Machine) PopLoading() {
 }
 
 func (m *Machine) LoadingCycle(path string) bool {
-	for _, p := range m.loading {
-		if p == path {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(m.loading, path)
 }
 
 func (m *Machine) LoadingPath() []string {
@@ -360,9 +355,7 @@ func (m *Machine) FireLocked(event string, payload map[string]Value) error {
 		payload = map[string]Value{}
 	}
 	keys := map[string]Value{}
-	for k, v := range payload {
-		keys[k] = v
-	}
+	maps.Copy(keys, payload)
 	c := newCtx(m, m.env, m.macros)
 	var order []string
 	spec, haveSpec := m.events[event]
@@ -472,9 +465,7 @@ func PackageValue(p Package) Value {
 		fn := f
 		names[name] = Value{k: KindFn, p: &fnVal{native: fn, name: name}}
 	}
-	for name, v := range p.Vals {
-		names[name] = v
-	}
+	maps.Copy(names, p.Vals)
 	return mapFromNames(names)
 }
 

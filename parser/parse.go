@@ -120,10 +120,7 @@ func (p *parser) read() (runtime.Value, error) {
 	p.skip()
 	t := p.tok()
 	if t.Kind == scanner.TokEOF {
-		start := p.endPos() - 1
-		if start < 0 {
-			start = 0
-		}
+		start := max(p.endPos()-1, 0)
 		return runtime.Value{}, runtime.ErrorIncomplete(start, p.pos(), "unexpected end of script")
 	}
 	switch t.Kind {

@@ -29,7 +29,8 @@ func Format(src string) (string, error) {
 		return "", nil
 	}
 	p := &printer{src: src}
-	text := p.formatVal(forms[0], 0)
+	var text strings.Builder
+	text.WriteString(p.formatVal(forms[0], 0))
 	for i := 1; i < len(forms); i++ {
 		prev := forms[i-1]
 		form := forms[i]
@@ -39,9 +40,9 @@ func Format(src string) (string, error) {
 		} else if form.Blank() {
 			sep = "\n\n"
 		}
-		text += sep + p.formatVal(form, 0)
+		text.WriteString(sep + p.formatVal(form, 0))
 	}
-	return text + "\n", nil
+	return text.String() + "\n", nil
 }
 
 func (p *printer) originalAtom(v runtime.Value) string {
@@ -269,15 +270,16 @@ func (p *printer) formatBlock(v runtime.Value, indent int) string {
 
 	if headName == "after" {
 		i := 1
-		header := "(" + headName
+		var header strings.Builder
+		header.WriteString("(" + headName)
 		for i < len(xs) && xs[i].Kind() != runtime.KindList {
-			header += " " + p.formatAtom(xs[i])
+			header.WriteString(" " + p.formatAtom(xs[i]))
 			i++
 		}
 		if i >= len(xs) {
-			return header + ")"
+			return header.String() + ")"
 		}
-		lines := []string{header}
+		lines := []string{header.String()}
 		for ; i < len(xs); i++ {
 			pushPrefixed(&lines, body, p.formatVal(xs[i], indent+1))
 		}

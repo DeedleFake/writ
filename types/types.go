@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"sync"
 
@@ -428,13 +429,7 @@ func printType(t Type, aliases []Alias) string {
 		var parts []string
 		for _, ar := range t.arrows {
 			p := printArrow(ar, aliases)
-			dup := false
-			for _, x := range parts {
-				if x == p {
-					dup = true
-					break
-				}
-			}
+			dup := slices.Contains(parts, p)
 			if !dup {
 				parts = append(parts, p)
 			}

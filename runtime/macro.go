@@ -1,5 +1,7 @@
 package runtime
 
+import "maps"
+
 func collectImported(v Value, into map[*Value]struct{}, nodes *[]Value) {
 	for _, n := range *nodes {
 		if valuePtrEq(n, v) {
@@ -183,9 +185,7 @@ func hygienic(v Value, imported []Value, subst map[string]string, h *hygState) V
 
 func copySubst(s map[string]string) map[string]string {
 	out := make(map[string]string, len(s)+4)
-	for k, v := range s {
-		out[k] = v
-	}
+	maps.Copy(out, s)
 	return out
 }
 

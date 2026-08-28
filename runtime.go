@@ -4,6 +4,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"deedles.dev/writ/parser"
@@ -189,9 +190,9 @@ func (rt *Runtime) RegisterTypeAlias(name string, t types.Type) {
 func (rt *Runtime) AliasType(name string) (types.Type, bool) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
-	for i := len(rt.aliases) - 1; i >= 0; i-- {
-		if rt.aliases[i].Name == name {
-			return rt.aliases[i].Type, true
+	for _, v := range slices.Backward(rt.aliases) {
+		if v.Name == name {
+			return v.Type, true
 		}
 	}
 	return types.Type{}, false
@@ -344,10 +345,8 @@ func (rt *Runtime) checkSrc(src, file string) types.CheckResult {
 		return types.CheckResult{}
 	}
 	if file != "" {
-		for _, p := range rt.checkLoading {
-			if p == file {
-				return types.CheckResult{Diagnostics: []types.Diagnostic{{Message: "import cycle: " + file}}}
-			}
+		if slices.Contains(rt.checkLoading, file) {
+			return types.CheckResult{Diagnostics: []types.Diagnostic{{Message: "import cycle: " + file}}}
 		}
 		rt.checkLoading = append(rt.checkLoading, file)
 		defer func() { rt.checkLoading = rt.checkLoading[:len(rt.checkLoading)-1] }()

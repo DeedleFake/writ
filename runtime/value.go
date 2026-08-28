@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"maps"
 	"math"
 	"math/big"
 	"reflect"
@@ -330,9 +331,7 @@ func (m *mapData) clone() *mapData {
 		vals: append([]Value(nil), m.vals...),
 		idx:  make(map[string]int, len(m.idx)),
 	}
-	for k, i := range m.idx {
-		out.idx[k] = i
-	}
+	maps.Copy(out.idx, m.idx)
 	return out
 }
 
@@ -563,7 +562,7 @@ func (v Value) As(dst any) bool {
 		return false
 	}
 	dp := reflect.ValueOf(dst)
-	if dp.Kind() != reflect.Ptr || dp.IsNil() {
+	if dp.Kind() != reflect.Pointer || dp.IsNil() {
 		return false
 	}
 	elem := dp.Elem()

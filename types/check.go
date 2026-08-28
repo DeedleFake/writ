@@ -1,6 +1,7 @@
 package types
 
 import (
+	"maps"
 	"sort"
 	"strconv"
 	"strings"
@@ -49,9 +50,7 @@ type typeEnv map[string]Type
 
 func (e typeEnv) clone() typeEnv {
 	out := make(typeEnv, len(e))
-	for k, v := range e {
-		out[k] = v
-	}
+	maps.Copy(out, e)
 	return out
 }
 
