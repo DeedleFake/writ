@@ -106,6 +106,77 @@ func TestParseTickSymbol(t *testing.T) {
 	if s.Kind() != runtime.KindSymbol || s.Name() != "foo bar" {
 		t.Fatalf("tick: %+v", s)
 	}
+	s = parse1(t, "`io.write`")
+	if s.Kind() != runtime.KindSymbol || s.Name() != "io.write" {
+		t.Fatalf("tick dotted: %+v", s)
+	}
+}
+
+func dottedCall(t *testing.T, v runtime.Value) []string {
+	t.Helper()
+	if v.Kind() != runtime.KindList || v.IsVec() {
+		t.Fatalf("want call, got %+v", v)
+	}
+	xs := v.Items()
+	if len(xs) < 3 || !runtime.IsName(xs[0], ".") {
+		t.Fatalf("want (. ...), got %+v", v)
+	}
+	out := make([]string, len(xs)-1)
+	for i, x := range xs[1:] {
+		if x.Kind() != runtime.KindSymbol {
+			t.Fatalf("segment %d: %+v", i, x)
+		}
+		out[i] = x.Name()
+	}
+	return out
+}
+
+func TestParseDottedAccess(t *testing.T) {
+	got := dottedCall(t, parse1(t, "io.write"))
+	if len(got) != 2 || got[0] != "io" || got[1] != "write" {
+		t.Fatalf("io.write: %v", got)
+	}
+	hand := dottedCall(t, parse1(t, "(. io write)"))
+	if len(hand) != 2 || hand[0] != "io" || hand[1] != "write" {
+		t.Fatalf("(. io write): %v", hand)
+	}
+	nested := dottedCall(t, parse1(t, "io.fs.write"))
+	if len(nested) != 3 || nested[0] != "io" || nested[1] != "fs" || nested[2] != "write" {
+		t.Fatalf("io.fs.write: %v", nested)
+	}
+	comp := parse1(t, "(. (f) write)")
+	xs := comp.Items()
+	if len(xs) != 3 || !runtime.IsName(xs[0], ".") || xs[1].Kind() != runtime.KindList || !runtime.IsName(xs[2], "write") {
+		t.Fatalf("computed left: %+v", comp)
+	}
+	q := parse1(t, "'io.write")
+	if q.Kind() != runtime.KindQuote {
+		t.Fatalf("quote kind: %+v", q)
+	}
+	got = dottedCall(t, q.Inner())
+	if len(got) != 2 || got[0] != "io" || got[1] != "write" {
+		t.Fatalf("quoted dotted: %v", got)
+	}
+}
+
+func TestParseDottedErrors(t *testing.T) {
+	cases := []struct {
+		src, sub string
+	}{
+		{"foo.", "end"},
+		{".foo", "start"},
+		{"foo..bar", "empty"},
+		{"foo.1", "name"},
+	}
+	for _, c := range cases {
+		_, err := Parse(c.src)
+		if err == nil || !strings.Contains(err.Error(), c.sub) {
+			t.Errorf("%q: got %v want %s", c.src, err, c.sub)
+		}
+	}
+	if _, err := Parse("(. x y)"); err != nil {
+		t.Fatalf("(. x y): %v", err)
+	}
 }
 
 func TestParseStrings(t *testing.T) {

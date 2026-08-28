@@ -49,12 +49,20 @@ type Handler struct {
 	env     *env
 }
 
+// NamedImport is a top-level keyed (import name: path ...).
+type NamedImport struct {
+	Name     string
+	PathForm Value
+	NameForm Value
+}
+
 // Program is expanded top-level forms.
 type Program struct {
 	Handlers []Handler
 	Boot     []Value
 	Fns      []NamedFn
 	Macros   []NamedFn
+	Imports  []NamedImport
 }
 
 type lastAdj struct {
@@ -64,13 +72,17 @@ type lastAdj struct {
 }
 
 type compileState struct {
-	onMap         map[string][]Clause
-	fnMap         map[string][]Clause
-	fnNameForm    map[string]Value
-	macroMap      map[string][]Clause
-	macroNameForm map[string]Value
-	boot          []Value
-	last          lastAdj
+	onMap          map[string][]Clause
+	fnMap          map[string][]Clause
+	fnNameForm     map[string]Value
+	macroMap       map[string][]Clause
+	macroNameForm  map[string]Value
+	imports        []NamedImport
+	importNames    map[string]struct{}
+	seenOther      bool
+	boot           []Value
+	bootAfterOther []bool
+	last           lastAdj
 }
 
 func newCompileState() *compileState {
@@ -80,10 +92,126 @@ func newCompileState() *compileState {
 		fnNameForm:    map[string]Value{},
 		macroMap:      map[string][]Clause{},
 		macroNameForm: map[string]Value{},
+		importNames:   map[string]struct{}{},
 	}
 }
 
 func (s *compileState) breakAdj() { s.last.ok = false }
+
+func importFnClash(name string) error {
+	return errf("%s cannot be both an import and a function", name)
+}
+
+func importMacroClash(name string) error {
+	return errf("%s cannot be both an import and a macro", name)
+}
+
+func alreadyImport(name string) error {
+	return errf("%s is already bound as an import", name)
+}
+
+func (s *compileState) takenByImport(name string) error {
+	if _, has := s.importNames[name]; has {
+		return alreadyImport(name)
+	}
+	return nil
+}
+
+func sessionImportBinding(rt *Machine, session bool, name string) error {
+	if !session || rt == nil {
+		return nil
+	}
+	if _, has := rt.macros[name]; has {
+		return importMacroClash(name)
+	}
+	if rt.env != nil {
+		if v, ok := rt.env.get(name); ok {
+			if v.k == KindFn {
+				return importFnClash(name)
+			}
+			return alreadyImport(name)
+		}
+	}
+	return nil
+}
+
+func sessionDefVsImport(rt *Machine, session bool, name string) error {
+	if !session || rt == nil || rt.env == nil {
+		return nil
+	}
+	if v, ok := rt.env.get(name); ok && v.k != KindFn {
+		return alreadyImport(name)
+	}
+	return nil
+}
+
+func (s *compileState) addImports(imps []NamedImport, rt *Machine, session bool) error {
+	for _, imp := range imps {
+		if scanner.IsKeyword(imp.Name) || scanner.IsBuiltin(imp.Name) {
+			return errf("cannot redefine %s", imp.Name)
+		}
+		if _, has := s.importNames[imp.Name]; has {
+			return errf("duplicate %s:", imp.Name)
+		}
+		if _, has := s.fnMap[imp.Name]; has {
+			return importFnClash(imp.Name)
+		}
+		if _, has := s.macroMap[imp.Name]; has {
+			return importMacroClash(imp.Name)
+		}
+		if err := sessionImportBinding(rt, session, imp.Name); err != nil {
+			return err
+		}
+		s.importNames[imp.Name] = struct{}{}
+		s.imports = append(s.imports, imp)
+	}
+	s.breakAdj()
+	return nil
+}
+
+func asKeyedImport(form Value) ([]NamedImport, bool, error) {
+	if form.k != KindList || form.IsVec() || len(form.Items()) == 0 || !isSymName(form.Items()[0], "import") {
+		return nil, false, nil
+	}
+	items := filterComments(form.Items()[1:])
+	var out []NamedImport
+	keyed := false
+	pos := 0
+	i := 0
+	for i < len(items) {
+		a := items[i]
+		if a.isKeySym() {
+			keyed = true
+			name := a.keyName()
+			if i+1 >= len(items) {
+				return nil, false, errf("missing value for %s", a.Name())
+			}
+			for _, prev := range out {
+				if prev.Name == name {
+					return nil, false, errf("duplicate %s", a.Name())
+				}
+			}
+			out = append(out, NamedImport{Name: name, PathForm: items[i+1], NameForm: a})
+			i += 2
+			continue
+		}
+		if keyed {
+			return nil, false, errMsg("positional argument after key:")
+		}
+		pos++
+		i++
+	}
+	if !keyed {
+		return nil, false, nil
+	}
+	if pos > 0 {
+		return nil, false, errMsg("do not mix positional and keyword parameters")
+	}
+	if len(out) == 0 {
+		return nil, false, errMsg("import needs one path")
+	}
+	return out, true, nil
+}
 
 func (s *compileState) addFn(kind, name string, params Params, body []Value, paramsForm, nameForm Value, adj bool) error {
 	mp := s.fnMap
@@ -165,7 +293,19 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 		if form.k == KindComment {
 			continue
 		}
+		if imps, ok, err := asKeyedImport(form); err != nil {
+			return Program{}, err
+		} else if ok {
+			if s.seenOther {
+				return Program{}, errVal(form, "(import ...) must appear before other top-level forms")
+			}
+			if err := s.addImports(imps, rt, session); err != nil {
+				return Program{}, err
+			}
+			continue
+		}
 		if form.k == KindList && !form.IsVec() && len(form.Items()) > 0 && isSymName(form.Items()[0], "on") {
+			s.seenOther = true
 			var ev, paramsForm Value
 			if len(form.Items()) > 1 {
 				ev = form.Items()[1]
@@ -181,7 +321,14 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 		if got, ok, err := asDefForm(form, "def"); err != nil {
 			return Program{}, err
 		} else if ok {
+			s.seenOther = true
 			if err := sessionClash(rt, session, got.Name, false); err != nil {
+				return Program{}, err
+			}
+			if err := sessionDefVsImport(rt, session, got.Name); err != nil {
+				return Program{}, err
+			}
+			if err := s.takenByImport(got.Name); err != nil {
 				return Program{}, err
 			}
 			if _, has := s.macroMap[got.Name]; has {
@@ -195,7 +342,14 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 		if got, ok, err := asDefForm(form, "defm"); err != nil {
 			return Program{}, err
 		} else if ok {
+			s.seenOther = true
 			if err := sessionClash(rt, session, got.Name, true); err != nil {
+				return Program{}, err
+			}
+			if err := sessionDefVsImport(rt, session, got.Name); err != nil {
+				return Program{}, err
+			}
+			if err := s.takenByImport(got.Name); err != nil {
 				return Program{}, err
 			}
 			if _, has := s.fnMap[got.Name]; has {
@@ -209,6 +363,8 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 			}
 			continue
 		}
+		s.bootAfterOther = append(s.bootAfterOther, s.seenOther)
+		s.seenOther = true
 		s.breakAdj()
 		s.boot = append(s.boot, form)
 	}
@@ -248,11 +404,36 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 		return nil
 	}
 
+	streamOther := false
 	takeExpanded := func(form Value) (bool, error) {
+		if imps, ok, err := asKeyedImport(form); err != nil {
+			return false, err
+		} else if ok {
+			if streamOther {
+				return false, errVal(form, "(import ...) must appear before other top-level forms")
+			}
+			for i := range imps {
+				p, err := expandVal(imps[i].PathForm, env, c)
+				if err != nil {
+					return false, err
+				}
+				imps[i].PathForm = p
+			}
+			if err := s.addImports(imps, rt, session); err != nil {
+				return false, err
+			}
+			return true, nil
+		}
 		if got, ok, err := asDefForm(form, "def"); err != nil {
 			return false, err
 		} else if ok {
 			if err := sessionClash(rt, session, got.Name, false); err != nil {
+				return false, err
+			}
+			if err := sessionDefVsImport(rt, session, got.Name); err != nil {
+				return false, err
+			}
+			if err := s.takenByImport(got.Name); err != nil {
 				return false, err
 			}
 			if _, has := macroTable[got.Name]; has {
@@ -265,12 +446,19 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 				return false, err
 			}
 			env.set(got.Name, makeFnVal(s.fnMap[got.Name], env))
+			streamOther = true
 			return true, nil
 		}
 		if got, ok, err := asDefForm(form, "defm"); err != nil {
 			return false, err
 		} else if ok {
 			if err := sessionClash(rt, session, got.Name, true); err != nil {
+				return false, err
+			}
+			if err := sessionDefVsImport(rt, session, got.Name); err != nil {
+				return false, err
+			}
+			if err := s.takenByImport(got.Name); err != nil {
 				return false, err
 			}
 			if _, has := s.fnMap[got.Name]; has {
@@ -280,6 +468,7 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 				return false, err
 			}
 			macroTable[got.Name] = s.macroMap[got.Name]
+			streamOther = true
 			return true, nil
 		}
 		if form.k == KindList && !form.IsVec() && len(form.Items()) > 0 && isSymName(form.Items()[0], "on") {
@@ -307,14 +496,26 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 			pf := paramsForm
 			list = append(list, Clause{Params: params, Body: form.Items()[3:], ParamsForm: &pf})
 			s.onMap[ev.Name()] = list
+			streamOther = true
 			return true, nil
 		}
 		return false, nil
 	}
 
+	for i := range s.imports {
+		p, err := expandVal(s.imports[i].PathForm, env, c)
+		if err != nil {
+			return Program{}, err
+		}
+		s.imports[i].PathForm = p
+	}
+
 	var newBoot []Value
 	s.last.ok = false
-	for _, form := range s.boot {
+	for i, form := range s.boot {
+		if i < len(s.bootAfterOther) && s.bootAfterOther[i] {
+			streamOther = true
+		}
 		xs, err := expandForms([]Value{form}, env, c)
 		if err != nil {
 			return Program{}, err
@@ -327,6 +528,7 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 			if took {
 				continue
 			}
+			streamOther = true
 			newBoot = append(newBoot, ex)
 		}
 	}
@@ -355,7 +557,7 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 	for name, clauses := range s.macroMap {
 		outMacros = append(outMacros, NamedFn{Name: name, Clauses: clauses, NameForm: s.macroNameForm[name]})
 	}
-	return Program{Handlers: handlers, Boot: newBoot, Fns: outFns, Macros: outMacros}, nil
+	return Program{Handlers: handlers, Boot: newBoot, Fns: outFns, Macros: outMacros, Imports: s.imports}, nil
 }
 
 // DefHead is a parsed (def ...) or (defm ...) head.
@@ -404,6 +606,9 @@ func parseDefHead(form Value, kw string) (DefHead, error) {
 		return DefHead{}, errMsg(hint + " needs a name")
 	}
 	if nameForm.IsTrue() || nameForm.IsFalse() || nameForm.IsNil() {
+		return DefHead{}, errf("cannot redefine %s", nameForm.Name())
+	}
+	if scanner.IsKeyword(nameForm.Name()) {
 		return DefHead{}, errf("cannot redefine %s", nameForm.Name())
 	}
 	paramsForm := CallList(head.Items()[1:]...)

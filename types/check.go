@@ -378,33 +378,165 @@ func (chk *checker) special(name string, args []runtime.Value, env typeEnv, form
 		return NilType(), true
 	case "import":
 		return chk.typeImport(args, env, form), true
+	case ".":
+		return chk.typeDot(args, env, form), true
 	default:
 		return Type{}, false
 	}
 }
 
+func (chk *checker) typeDot(args []runtime.Value, env typeEnv, form runtime.Value) Type {
+	args = runtime.FilterComments(args)
+	if len(args) < 2 {
+		chk.err(form, ". needs a map and a name")
+		return tDyn(Any())
+	}
+	cur := chk.typeForm(args[0], env)
+	for _, k := range args[1:] {
+		if k.Kind() != runtime.KindSymbol || k.IsKey() {
+			chk.err(k, ". key must be a name")
+			return tDyn(Any())
+		}
+		cur = chk.typeDotLookup(cur, k.Name(), k)
+	}
+	return cur
+}
+
+type dotKind int
+
+const (
+	dotOK dotKind = iota
+	dotUnknown
+	dotUnknownField
+	dotNotMap
+)
+
+func isDefiniteNonMap(t Type) bool {
+	switch unwrap(t).k {
+	case tyNil, tyBool, tyInt, tyFloat, tyStr, tyUStr, tySym, tyUSym,
+		tyEmptyList, tyList, tyTuple, tyFn, tyNative:
+		return true
+	default:
+		return false
+	}
+}
+
+func (chk *checker) typeDotLookup(m Type, key string, at runtime.Value) Type {
+	t, kind := dotLookup(m, key)
+	switch kind {
+	case dotOK:
+		return t
+	case dotUnknownField:
+		chk.err(at, "unknown field "+key)
+		return tDyn(Any())
+	case dotNotMap:
+		chk.err(at, ". needs a map")
+		return tDyn(Any())
+	default:
+		return tDyn(Any())
+	}
+}
+
+func dotLookup(m Type, key string) (Type, dotKind) {
+	if m.k == tyDyn {
+		u := unwrap(m)
+		if u.k == tyOr || u.k == tyMap || u.k == tyEmptyMap {
+			t, k := dotLookup(u, key)
+			if k == dotOK {
+				return t, dotOK
+			}
+			return tDyn(Any()), dotUnknown
+		}
+		return tDyn(Any()), dotUnknown
+	}
+	u := unwrap(m)
+	switch u.k {
+	case tyAny:
+		return tDyn(Any()), dotUnknown
+	case tyEmptyMap:
+		return Type{}, dotUnknownField
+	case tyMap:
+		if t, ok := u.field(key); ok {
+			return t, dotOK
+		}
+		if u.rest != nil {
+			return *u.rest, dotOK
+		}
+		return Type{}, dotUnknownField
+	case tyOr:
+		var results []Type
+		allNotMap := true
+		allMissingOrNot := true
+		anyOK := false
+		anyUnknown := false
+		for _, b := range u.items {
+			t, k := dotLookup(b, key)
+			if k != dotNotMap {
+				allNotMap = false
+			}
+			if k != dotNotMap && k != dotUnknownField {
+				allMissingOrNot = false
+			}
+			switch k {
+			case dotOK:
+				anyOK = true
+				results = append(results, t)
+			case dotUnknown:
+				anyUnknown = true
+				results = append(results, tDyn(Any()))
+			}
+		}
+		if anyOK || anyUnknown {
+			return tOr(results), dotOK
+		}
+		if allNotMap {
+			return Type{}, dotNotMap
+		}
+		if allMissingOrNot {
+			return Type{}, dotUnknownField
+		}
+		return tDyn(Any()), dotUnknown
+	default:
+		if isDefiniteNonMap(u) {
+			return Type{}, dotNotMap
+		}
+		return tDyn(Any()), dotUnknown
+	}
+}
+
 func (chk *checker) typeImport(args []runtime.Value, env typeEnv, form runtime.Value) Type {
+	args = runtime.FilterComments(args)
+	for _, a := range args {
+		if a.IsKey() {
+			chk.err(form, "(import ...) only works at the top of a script")
+			return tDyn(Any())
+		}
+	}
 	if len(args) != 1 {
 		chk.err(form, "import needs one path")
 		return tDyn(Any())
 	}
-	t := chk.typeForm(args[0], env)
+	return chk.typeImportPath(args[0], env)
+}
+
+func (chk *checker) typeImportPath(path runtime.Value, env typeEnv) Type {
+	t := chk.typeForm(path, env)
 	u := unwrap(t)
 	if u.k == tyStr && u.has && chk.cfg.Import != nil {
 		mt, diags, err := chk.cfg.Import(u.s, chk.cfg.File)
 		if chk.pass == 1 {
 			for _, d := range diags {
-				chk.err(args[0], d.Message)
+				chk.err(path, d.Message)
 			}
 			if err != nil {
-				chk.err(args[0], err.Error())
+				chk.err(path, err.Error())
 			}
 		}
 		if err == nil {
 			return mt
 		}
 	}
-	chk.expect(t, stringyType(), args[0], "import")
+	chk.expect(t, stringyType(), path, "import")
 	anyT := Any()
 	return tDyn(tMap(nil, &anyT))
 }
@@ -1626,7 +1758,7 @@ func mergeDiags(diags []Diagnostic) []Diagnostic {
 
 // Check type-checks already-expanded forms and a compiled program.
 func Check(forms []runtime.Value, prog runtime.Program, cfg Config) CheckResult {
-	if len(forms) == 0 && len(prog.Boot) == 0 && len(prog.Fns) == 0 && len(prog.Handlers) == 0 && len(prog.Macros) == 0 {
+	if len(forms) == 0 && len(prog.Boot) == 0 && len(prog.Fns) == 0 && len(prog.Handlers) == 0 && len(prog.Macros) == 0 && len(prog.Imports) == 0 {
 		return CheckResult{}
 	}
 	chk := newChecker(cfg)
@@ -1719,6 +1851,13 @@ func Check(forms []runtime.Value, prog runtime.Program, cfg Config) CheckResult 
 	}
 
 	runBodies := func() {
+		for _, imp := range prog.Imports {
+			t := chk.typeImportPath(imp.PathForm, env)
+			env[imp.Name] = t
+			if imp.NameForm.HasSpan() {
+				chk.note(imp.NameForm, t, imp.Name)
+			}
+		}
 		for _, f := range boot {
 			chk.typeForm(f, env)
 		}

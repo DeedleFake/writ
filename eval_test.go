@@ -3,6 +3,8 @@ package writ
 import (
 	"deedles.dev/writ/runtime"
 	"math/big"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -605,6 +607,183 @@ func TestEvalKeywordExtraArgs(t *testing.T) {
 `)
 	if !strings.Contains(err.Error(), "unknown") {
 		t.Fatalf("extra kw: %v", err)
+	}
+}
+
+func TestEvalDottedAccess(t *testing.T) {
+	v := evals(t, `(let [io: [write: (fn (x) x)]] (io.write 9))`)
+	if !v.Equal(runtime.Int64(9)) {
+		t.Fatalf("call: %v", v)
+	}
+	v = evals(t, `(let [io: [write: 4]] io.write)`)
+	if !v.Equal(runtime.Int64(4)) {
+		t.Fatalf("value: %v", v)
+	}
+	v = evals(t, `(let [a: [b: [c: 3]]] a.b.c)`)
+	if !v.Equal(runtime.Int64(3)) {
+		t.Fatalf("nested: %v", v)
+	}
+	v = evals(t, `(let [f: (fn () [write: 7])] (. (f) write))`)
+	if !v.Equal(runtime.Int64(7)) {
+		t.Fatalf("computed left: %v", v)
+	}
+	v = evals(t, `(let [get: (fn (m k) 0) m: [a: 1]] m.a)`)
+	if !v.Equal(runtime.Int64(1)) {
+		t.Fatalf("shadow get: %v", v)
+	}
+	err := evalErr(t, `(let [m: [a: 1]] m.b)`)
+	if !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("missing: %v", err)
+	}
+	err = evalErr(t, `(let [x: 1] x.a)`)
+	if !strings.Contains(err.Error(), "map") {
+		t.Fatalf("non-map: %v", err)
+	}
+	err = evalErr(t, `(let [a: [b: 1]] a.b.c)`)
+	if !strings.Contains(err.Error(), "map") {
+		t.Fatalf("nested non-map: %v", err)
+	}
+}
+
+func TestEvalKeyedImport(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lib.writ"), []byte("(def (double n) (* n 2))\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	use := filepath.Join(dir, "use.writ")
+	if err := os.WriteFile(use, []byte("(import lib: \"lib.writ\")\n(lib.double 21)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err := New().EvalFile(use)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(42)) {
+		t.Fatalf("keyed import: %v", v)
+	}
+
+	wrap := filepath.Join(dir, "wrap.writ")
+	if err := os.WriteFile(wrap, []byte("(import lib: \"lib.writ\")\n(def (f) 1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	outer := filepath.Join(dir, "outer.writ")
+	if err := os.WriteFile(outer, []byte("(import wrap: \"wrap.writ\")\n(wrap.f)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err = New().EvalFile(outer)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(1)) {
+		t.Fatalf("wrap f: %v", v)
+	}
+	miss := filepath.Join(dir, "miss.writ")
+	if err := os.WriteFile(miss, []byte("(import wrap: \"wrap.writ\")\nwrap.lib\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New().EvalFile(miss)
+	if err == nil || !strings.Contains(err.Error(), "unknown field") {
+		t.Fatalf("import not exported: %v", err)
+	}
+
+	pos := filepath.Join(dir, "pos.writ")
+	if err := os.WriteFile(pos, []byte("(let [m: (import \"lib.writ\")] (m.double 3))\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err = New().EvalFile(pos)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(6)) {
+		t.Fatalf("positional import: %v", v)
+	}
+
+	late := filepath.Join(dir, "late.writ")
+	if err := os.WriteFile(late, []byte("(def (f) 1)\n(import lib: \"lib.writ\")\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New().EvalFile(late)
+	if err == nil || !strings.Contains(err.Error(), "top-level") && !strings.Contains(err.Error(), "before") {
+		t.Fatalf("import after def: %v", err)
+	}
+
+	rt := New(WithSearchPath(dir))
+	if _, err := rt.Eval("(def (f) 1)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rt.Eval(`(import lib: "lib.writ")`); err != nil {
+		t.Fatalf("session import after def: %v", err)
+	}
+	v, err = rt.Eval("(lib.double 4)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(8)) {
+		t.Fatalf("session lib: %v", v)
+	}
+
+	err = evalErr(t, `(let [x: 1] (import lib: "lib.writ"))`)
+	if !strings.Contains(err.Error(), "top") {
+		t.Fatalf("nested keyed import: %v", err)
+	}
+	err = evalErr(t, `(import)`)
+	if err == nil {
+		t.Fatal("empty import")
+	}
+	err = evalErr(t, `(def (. x) x)`)
+	if err == nil || !strings.Contains(err.Error(), "redefine") {
+		t.Fatalf("redefine .: %v", err)
+	}
+	err = evalErr(t, `(import "lib.writ" lib: "lib.writ")`)
+	if err == nil {
+		t.Fatal("mixed import args")
+	}
+
+	clash := filepath.Join(dir, "clash.writ")
+	if err := os.WriteFile(clash, []byte("(import lib: \"lib.writ\")\n(def (lib n) n)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New().EvalFile(clash)
+	if err == nil || !strings.Contains(err.Error(), "already bound as an import") {
+		t.Fatalf("import then def: %v", err)
+	}
+
+	lateMac := filepath.Join(dir, "latemac.writ")
+	if err := os.WriteFile(lateMac, []byte(`
+(defm (imp)
+  '(import lib: "lib.writ"))
+(def (f) 1)
+(imp)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err = New().EvalFile(lateMac)
+	if err == nil || !strings.Contains(err.Error(), "before") && !strings.Contains(err.Error(), "top-level") {
+		t.Fatalf("expanded import after def: %v", err)
+	}
+}
+
+func TestEvalDottedHygiene(t *testing.T) {
+	v := evals(t, `
+(defm (m)
+  '(fn (.) (. [a: 3] a)))
+((m) 0)
+`)
+	if !v.Equal(runtime.Int64(3)) {
+		t.Fatalf("fn param named .: %v", v)
+	}
+	v = evals(t, "(defm (m)\n  '(let [`.:` 1] (let [m: [a: 3]] m.a)))\n(m)\n")
+	if !v.Equal(runtime.Int64(3)) {
+		t.Fatalf("let bind named .: %v", v)
+	}
+	v = evals(t, `
+(defm (access m write)
+  '(. ,m write))
+(let [write: 99 m: [write: 8]]
+  (access m write))
+`)
+	if !v.Equal(runtime.Int64(8)) {
+		t.Fatalf("key hygiene: %v", v)
 	}
 }
 

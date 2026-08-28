@@ -195,7 +195,11 @@ func (p *parser) read() (runtime.Value, error) {
 		if word == "" {
 			return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "empty token")
 		}
-		return p.attachTrail(runtime.Symbol(word).WithSpan(t.Start, t.End)), nil
+		atom, err := dottedForm(word, t.Start, t.End)
+		if err != nil {
+			return runtime.Value{}, err
+		}
+		return p.attachTrail(atom), nil
 	default:
 		p.advance()
 		return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "empty token")
@@ -280,6 +284,32 @@ func finishBracket(xs []runtime.Value) (runtime.Value, error) {
 		m = m.WithKeySpans(keySpans)
 	}
 	return m, nil
+}
+
+func dottedForm(word string, start, end int) (runtime.Value, error) {
+	if word == "." || !strings.Contains(word, ".") {
+		return runtime.Symbol(word).WithSpan(start, end), nil
+	}
+	parts := strings.Split(word, ".")
+	if parts[0] == "" {
+		return runtime.Value{}, runtime.ErrorAt(start, end, "dotted name cannot start with .")
+	}
+	if parts[len(parts)-1] == "" {
+		return runtime.Value{}, runtime.ErrorAt(start, end, "dotted name cannot end with .")
+	}
+	xs := []runtime.Value{runtime.Symbol(".")}
+	off := start
+	for i, part := range parts {
+		if part == "" {
+			return runtime.Value{}, runtime.ErrorAt(start, end, "dotted name cannot contain empty field")
+		}
+		if i > 0 && scanner.IsNumLit(part) {
+			return runtime.Value{}, runtime.ErrorAt(off, off+len(part), "dotted name field must be a name")
+		}
+		xs = append(xs, runtime.Symbol(part).WithSpan(off, off+len(part)))
+		off += len(part) + 1
+	}
+	return runtime.CallList(xs...).WithSpan(start, end), nil
 }
 
 func unquoteTick(t scanner.Token) (string, error) {

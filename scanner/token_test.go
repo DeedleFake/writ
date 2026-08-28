@@ -33,4 +33,7 @@ func TestWords(t *testing.T) {
 	if !hasDef || !hasPlus {
 		t.Fatalf("words %v", ws)
 	}
+	if !IsKeyword(".") {
+		t.Fatal(". should be a keyword")
+	}
 }

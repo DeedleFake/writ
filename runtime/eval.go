@@ -495,9 +495,38 @@ func special(name string, args []Value, env *env, c *ctx) (Value, bool, error) {
 	case "import":
 		v, err := evalImport(args, env, c)
 		return v, true, err
+	case ".":
+		v, err := evalDot(args, env, c)
+		return v, true, err
 	default:
 		return Value{}, false, nil
 	}
+}
+
+func evalDot(args []Value, env *env, c *ctx) (Value, error) {
+	args = filterComments(args)
+	if len(args) < 2 {
+		return Value{}, errMsg(". needs a map and a name")
+	}
+	cur, err := evalVal(args[0], env, c)
+	if err != nil {
+		return Value{}, err
+	}
+	for _, k := range args[1:] {
+		if k.k != KindSymbol || k.isKeySym() {
+			return Value{}, errVal(k, ". key must be a name")
+		}
+		if cur.k != KindMap {
+			return Value{}, errVal(k, ". needs a map")
+		}
+		name := k.Name()
+		v, ok := cur.mapData().get(name)
+		if !ok {
+			return Value{}, errValf(k, "unknown field %s", name)
+		}
+		cur = v
+	}
+	return cur, nil
 }
 
 func makeFn(args []Value, env *env) (Value, error) {

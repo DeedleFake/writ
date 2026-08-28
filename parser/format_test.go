@@ -93,6 +93,9 @@ func TestFormatRoundTrip(t *testing.T) {
 		"-3.5\n",
 		"\"a\\nb\"\n",
 		"`foo bar`\n",
+		"`io.write`\n",
+		"io.write\n",
+		"a.b.c\n",
 		"(if x\n  1\nelse if y\n  2\nelse\n  3)\n",
 	}
 	for _, src := range srcs {
@@ -129,5 +132,29 @@ func TestFormatEmpty(t *testing.T) {
 func TestFormatParseError(t *testing.T) {
 	if _, err := Format("("); err == nil {
 		t.Fatal("expected error")
+	}
+}
+
+func TestFormatDottedAccess(t *testing.T) {
+	out, err := Format("(. io write)\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "io.write\n" {
+		t.Fatalf("got %q", out)
+	}
+	out, err = Format("(. (. io fs) write)\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "io.fs.write\n" {
+		t.Fatalf("nested got %q", out)
+	}
+	out, err = Format("(. (f) write)\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != "(. (f) write)\n" {
+		t.Fatalf("computed got %q", out)
 	}
 }

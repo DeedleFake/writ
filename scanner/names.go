@@ -55,6 +55,7 @@ var keywords = map[string]struct{}{
 	"defm":   {},
 	"let!":   {},
 	"import": {},
+	".":      {},
 }
 
 var builtins = map[string]struct{}{

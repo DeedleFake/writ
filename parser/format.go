@@ -16,6 +16,7 @@ type printer struct {
 var bodySpecials = map[string]struct{}{
 	"on": {}, "def": {}, "fn": {}, "let": {}, "if": {},
 	"after": {}, "pipe": {}, "let!": {}, "defm": {}, "import": {},
+	".": {},
 }
 
 // Format pretty-prints src. A trailing newline is added when src is not empty.
@@ -144,6 +145,9 @@ func (p *printer) formatVal(v runtime.Value, indent int) string {
 	}
 	if v.Kind() != runtime.KindList {
 		return p.formatAtom(v)
+	}
+	if s, ok := p.formatDotted(v); ok {
+		return s
 	}
 	xs := v.Items()
 	empty := "()"
@@ -447,7 +451,40 @@ func (p *printer) formatBlock(v runtime.Value, indent int) string {
 	return closeOn(lines, ")")
 }
 
+func (p *printer) formatDotted(v runtime.Value) (string, bool) {
+	if v.Kind() != runtime.KindList || v.IsVec() {
+		return "", false
+	}
+	if hasBreakComment(v) {
+		return "", false
+	}
+	xs := runtime.FilterComments(v.Items())
+	if len(xs) < 3 || !runtime.IsName(xs[0], ".") {
+		return "", false
+	}
+	for _, k := range xs[2:] {
+		if k.Kind() != runtime.KindSymbol || k.IsKey() || runtime.FormatSymbol(k.Name()) != k.Name() {
+			return "", false
+		}
+	}
+	var left string
+	if xs[1].Kind() == runtime.KindSymbol && !xs[1].IsKey() && runtime.FormatSymbol(xs[1].Name()) == xs[1].Name() {
+		left = xs[1].Name()
+	} else if s, ok := p.formatDotted(xs[1]); ok {
+		left = s
+	} else {
+		return "", false
+	}
+	for _, k := range xs[2:] {
+		left += "." + k.Name()
+	}
+	return suffixCmt(v, left), true
+}
+
 func (p *printer) formatInline(v runtime.Value) string {
+	if s, ok := p.formatDotted(v); ok {
+		return s
+	}
 	if v.Kind() == runtime.KindQuote || v.Kind() == runtime.KindUnquote || v.Kind() == runtime.KindSplice {
 		mark := "'"
 		if v.Kind() == runtime.KindUnquote {
@@ -485,6 +522,9 @@ func (p *printer) formatInline(v runtime.Value) string {
 }
 
 func (p *printer) formatCore(v runtime.Value) string {
+	if s, ok := p.formatDotted(v); ok {
+		return s
+	}
 	if v.Kind() == runtime.KindComment {
 		return v.CommentText()
 	}

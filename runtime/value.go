@@ -643,6 +643,9 @@ func needsTicks(name string) bool {
 	if strings.ContainsAny(name, " \t\n\r();[]',@`") {
 		return true
 	}
+	if strings.Contains(name, ".") && name != "." {
+		return true
+	}
 	if scanner.IsNumLit(name) {
 		return true
 	}

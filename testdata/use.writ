@@ -1,2 +1,2 @@
-(let [lib: (import "lib.writ")]
-  ((get lib 'add) 2 ((get lib 'answer))))
+(import lib: "lib.writ")
+(lib.add 2 (lib.answer))

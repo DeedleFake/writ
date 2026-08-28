@@ -250,6 +250,9 @@ func (m *Machine) EvalLocked(forms []Value) (Value, error) {
 		prog.Handlers[i].env = env
 	}
 	c := newCtx(m, env, m.macros)
+	if err := evalNamedImports(prog.Imports, env, c); err != nil {
+		return Value{}, asError(err).withFile(file)
+	}
 	v, err := evalForms(prog.Boot, env, c)
 	m.handlers = append(m.handlers, prog.Handlers...)
 	if err != nil {
@@ -269,6 +272,9 @@ func (m *Machine) EvalModule(path string, forms []Value) (Value, error) {
 	macros := toMacroTable(prog.Macros)
 	c := newCtx(m, env, macros)
 	c.file = path
+	if err := evalNamedImports(prog.Imports, env, c); err != nil {
+		return Value{}, asError(err).withFile(path)
+	}
 	if _, err := evalForms(prog.Boot, env, c); err != nil {
 		return Value{}, asError(err).withFile(path)
 	}
@@ -409,10 +415,17 @@ func (m *Machine) FireLocked(event string, payload map[string]Value) error {
 }
 
 func evalImport(args []Value, env *env, c *ctx) (Value, error) {
-	if len(args) != 1 {
+	parsed, err := parseCallRaw(filterComments(args))
+	if err != nil {
+		return Value{}, err
+	}
+	if len(parsed.keys) > 0 {
+		return Value{}, errMsg("(import ...) only works at the top of a script")
+	}
+	if len(parsed.pos) != 1 {
 		return Value{}, errMsg("import needs one path")
 	}
-	v, err := evalVal(args[0], env, c)
+	v, err := evalVal(parsed.pos[0], env, c)
 	if err != nil {
 		return Value{}, err
 	}
@@ -423,6 +436,27 @@ func evalImport(args []Value, env *env, c *ctx) (Value, error) {
 		return Value{}, errMsg("import needs a runtime")
 	}
 	return c.rt.Import(v.s, c.file)
+}
+
+func evalNamedImports(imps []NamedImport, env *env, c *ctx) error {
+	for _, imp := range imps {
+		path, err := evalVal(imp.PathForm, env, c)
+		if err != nil {
+			return err
+		}
+		if path.k != KindString {
+			return errVal(imp.PathForm, "import needs a string path")
+		}
+		if c.rt == nil || c.rt.Import == nil {
+			return errMsg("import needs a runtime")
+		}
+		pkg, err := c.rt.Import(path.s, c.file)
+		if err != nil {
+			return err
+		}
+		env.set(imp.Name, pkg)
+	}
+	return nil
 }
 
 // PackageValue builds the map returned by (import) of a native package.

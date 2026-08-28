@@ -166,6 +166,9 @@ func hygienic(v Value, imported []Value, subst map[string]string, h *hygState) V
 		if name == "fn" || name == "def" || name == "defm" || name == "on" {
 			return hygienicFnLike(v, imported, subst, name, h)
 		}
+		if name == "." {
+			return hygienicDot(v, imported, subst, h)
+		}
 		xs := make([]Value, len(v.Items()))
 		for i, x := range v.Items() {
 			xs[i] = hygienic(x, imported, subst, h)
@@ -184,6 +187,31 @@ func copySubst(s map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func hygienicDot(v Value, imported []Value, subst map[string]string, h *hygState) Value {
+	xs := v.Items()
+	out := make([]Value, len(xs))
+	head, left := false, false
+	for i, x := range xs {
+		if x.k == KindComment {
+			out[i] = x
+			continue
+		}
+		if !head {
+			out[i] = x
+			head = true
+			continue
+		}
+		if !left {
+			out[i] = hygienic(x, imported, subst, h)
+			left = true
+			continue
+		}
+		out[i] = x
+	}
+	v = v.withItems(out)
+	return v
 }
 
 func renameParamForm(form Value, imported []Value, subst map[string]string, h *hygState) (Value, map[string]string) {
@@ -489,6 +517,8 @@ func expandTree(v Value, env *env, c *ctx) (Value, error) {
 				return expandIf(v, env, c)
 			case "after":
 				return expandAfter(v, env, c)
+			case ".":
+				return expandDot(v, env, c)
 			}
 		}
 		return expandElems(v, env, c)
@@ -590,6 +620,34 @@ func expandIf(v Value, env *env, c *ctx) (Value, error) {
 	out := v
 	out = out.withItems(xs)
 	return out, nil
+}
+
+func expandDot(v Value, env *env, c *ctx) (Value, error) {
+	xs := v.Items()
+	out := make([]Value, len(xs))
+	head, left := false, false
+	for i, x := range xs {
+		if x.k == KindComment {
+			out[i] = x
+			continue
+		}
+		if !head {
+			out[i] = x
+			head = true
+			continue
+		}
+		if !left {
+			ex, err := expandVal(x, env, c)
+			if err != nil {
+				return Value{}, err
+			}
+			out[i] = ex
+			left = true
+			continue
+		}
+		out[i] = x
+	}
+	return v.withItems(out), nil
 }
 
 func expandAfter(v Value, env *env, c *ctx) (Value, error) {

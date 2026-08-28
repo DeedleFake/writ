@@ -322,6 +322,99 @@ func TestCheckPrintAligned(t *testing.T) {
 	}
 }
 
+func TestCheckDottedAccess(t *testing.T) {
+	res := Check(`(let [io: [write: (fn (x) x)]] (io.write 1))`)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("call: %v", res.Diagnostics)
+	}
+	res = Check(`(let [a: [b: [c: 3]]] a.b.c)`)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("nested: %v", res.Diagnostics)
+	}
+	res = Check(`(let [m: [a: 1]] m.b)`)
+	found := false
+	for _, d := range res.Diagnostics {
+		if strings.Contains(d.Message, "unknown field") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("missing field: %v", res.Diagnostics)
+	}
+	res = Check(`(let [x: 1] x.a)`)
+	found = false
+	for _, d := range res.Diagnostics {
+		if strings.Contains(d.Message, "map") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("non-map: %v", res.Diagnostics)
+	}
+	res = Check(`(fn (m) (if (map? m) m.x else 0))`)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("map? then .: %v", res.Diagnostics)
+	}
+	res = Check(`(let [m: (if true [a: 1] else [b: 2])] m.a)`)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("union m.a: %v", res.Diagnostics)
+	}
+	res = Check(`(let [m: (if true [a: [c: 1]] else [a: [d: 2]])] m.a.c)`)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("union nested: %v", res.Diagnostics)
+	}
+}
+
+func TestCheckKeyedImport(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lib.writ"), []byte("(def (add a b) (+ a b))\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	use := filepath.Join(dir, "use.writ")
+	if err := os.WriteFile(use, []byte("(import lib: \"lib.writ\")\n(lib.add 1 2)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := New().CheckFile(use)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("keyed import: %v", res.Diagnostics)
+	}
+	bad := filepath.Join(dir, "bad.writ")
+	if err := os.WriteFile(bad, []byte("(import lib: \"lib.writ\")\n(lib.add 1 \"x\")\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res = New().CheckFile(bad)
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("expected imported add type error")
+	}
+	late := filepath.Join(dir, "late.writ")
+	if err := os.WriteFile(late, []byte("(def (f) 1)\n(import lib: \"lib.writ\")\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res = New().CheckFile(late)
+	found := false
+	for _, d := range res.Diagnostics {
+		if strings.Contains(d.Message, "top-level") || strings.Contains(d.Message, "before") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("import after def: %v", res.Diagnostics)
+	}
+
+	rt := New()
+	rt.RegisterPackage("io", runtime.Package{
+		Funcs: map[string]runtime.Func{
+			"write": func(args []runtime.Value) (runtime.Value, error) {
+				return runtime.Nil, nil
+			},
+		},
+	})
+	res = rt.Check(`(import io: "io") (io.write "x")`)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("host io.write: %v", res.Diagnostics)
+	}
+}
+
 func TestCheckDefmFragments(t *testing.T) {
 	res := Check(`
 (defm (example @rest)
