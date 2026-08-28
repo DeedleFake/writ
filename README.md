@@ -1,5 +1,7 @@
 # Writ
 
+[![Go Reference](https://pkg.go.dev/badge/deedles.dev/writ.svg)](https://pkg.go.dev/deedles.dev/writ)
+
 Writ is a Lisp embedded in Go. This module is the language library and a CLI.
 
 ## Install
