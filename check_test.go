@@ -415,6 +415,24 @@ func TestCheckKeyedImport(t *testing.T) {
 	}
 }
 
+func TestCheckImportedMacros(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "macs.writ"), []byte(`
+(defm (unless test @body)
+  (cons 'if (cons 'not (cons test body))))
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	use := filepath.Join(dir, "use.writ")
+	if err := os.WriteFile(use, []byte("(import m: \"macs.writ\")\n(m.unless false 1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res := New().CheckFile(use)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("imported unless: %v", res.Diagnostics)
+	}
+}
+
 func TestCheckDefmFragments(t *testing.T) {
 	res := Check(`
 (defm (example @rest)

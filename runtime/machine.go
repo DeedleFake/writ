@@ -288,7 +288,7 @@ func (m *Machine) EvalModule(path string, forms []Value) (Value, error) {
 		if _, ok := names[mac.Name]; ok {
 			continue
 		}
-		names[mac.Name] = makeFnVal(mac.Clauses, env)
+		names[mac.Name] = makeMacroVal(mac.Name, mac.Clauses, env)
 	}
 	exp := mapFromNames(names)
 	for i := range prog.Handlers {

@@ -1072,6 +1072,8 @@ func kindOf(v runtime.Value) Type {
 		return tMap(fields, nil)
 	case runtime.KindFn:
 		return FnType()
+	case runtime.KindMacro:
+		return tDyn(Any())
 	case runtime.KindNative:
 		nv, ok := v.Native()
 		if !ok {

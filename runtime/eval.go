@@ -125,7 +125,7 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 	switch v.k {
 	case KindComment:
 		return Nil, nil
-	case KindInt, KindFloat, KindString, KindFn, KindNative:
+	case KindInt, KindFloat, KindString, KindFn, KindMacro, KindNative:
 		return v, nil
 	case KindQuote:
 		return evalQuote(v.innerVal(), env, c, 1)
@@ -210,6 +210,9 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 		fn, err := evalVal(head, env, c)
 		if err != nil {
 			return Value{}, err
+		}
+		if fn.k == KindMacro {
+			return evalMacroCall(fn, xs[1:], env, c, v)
 		}
 		call, err := evalCallRaw(xs[1:], env, c)
 		if err != nil {
@@ -615,7 +618,34 @@ func evalPipe(args []Value, env *env, c *ctx) (Value, error) {
 	return cur, nil
 }
 
+func evalMacroCall(mac Value, raw []Value, env *env, c *ctx, call Value) (Value, error) {
+	f := mac.fnData()
+	if f == nil {
+		return Value{}, errMsg("not a macro")
+	}
+	name := f.name
+	if name == "" {
+		name = "macro"
+	}
+	frags, err := applyMacro(name, f.clauses, raw, c, call, f.env)
+	if err != nil {
+		return Value{}, err
+	}
+	expanded, err := expandForms(frags, env, c)
+	if err != nil {
+		return Value{}, err
+	}
+	return evalVal(packExpr(expanded, call), env, c)
+}
+
 func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
+	if fn.k == KindMacro {
+		who := "macro"
+		if f := fn.fnData(); f != nil && f.name != "" {
+			who = f.name
+		}
+		return Value{}, errf("%s is a macro", who)
+	}
 	if fn.k == KindFn && fn.fnData() != nil {
 		f := fn.fnData()
 		if f.native != nil {

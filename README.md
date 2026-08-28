@@ -59,7 +59,7 @@ A `defm` body is expand-time fragments. Each result is one form at the call site
 
 ## Import
 
-`(import "path")` evaluates another script once per runtime and returns a map of that script's top-level `def` and `defm` names. It is an expression and may appear in `let`.
+`(import "path")` evaluates another script once per runtime and returns a map of that script's top-level `def` and `defm` names. It is an expression and may appear in `let`. A `defm` in that map is a macro: `(m.unless …)` expands with unevaluated arguments, for both keyed import and `(let [m: (import "m")] …)`. Passing a macro to `map` (or otherwise applying it as a function) is an error.
 
 At the top of a script, keyed import binds names without exporting them:
 

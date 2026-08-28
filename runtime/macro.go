@@ -342,7 +342,7 @@ func hygienicFnLike(v Value, imported []Value, subst map[string]string, name str
 	return v
 }
 
-func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) ([]Value, error) {
+func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value, defEnv *env) ([]Value, error) {
 	parsed, err := parseCallRaw(raw)
 	if err != nil {
 		e := asError(err)
@@ -369,8 +369,11 @@ func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) 
 	if allKey && len(parts.pos) > 0 {
 		return nil, errVal(call, "this macro needs key: arguments")
 	}
+	if defEnv == nil {
+		defEnv = c.macroEnv
+	}
 	for _, clause := range clauses {
-		child := makeEnv(c.macroEnv)
+		child := makeEnv(defEnv)
 		if !tryBind(clause.Params, parts, child) {
 			continue
 		}
@@ -395,20 +398,75 @@ func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value) 
 	return nil, errValf(call, "no matching clause for %s", name)
 }
 
-func asMacroCall(v Value, c *ctx) (name string, clauses []Clause, args []Value, ok bool) {
+func asMacroCall(v Value, env *env, c *ctx) (name string, clauses []Clause, args []Value, defEnv *env, ok bool) {
 	if v.k != KindList || v.IsVec() {
-		return "", nil, nil, false
+		return "", nil, nil, nil, false
 	}
 	xs := filterComments(v.Items())
-	if len(xs) == 0 || xs[0].k != KindSymbol {
-		return "", nil, nil, false
+	if len(xs) == 0 {
+		return "", nil, nil, nil, false
 	}
-	name = xs[0].Name()
-	clauses, ok = c.macros[name]
+	head := xs[0]
+	if head.k == KindSymbol {
+		name = head.Name()
+		clauses, ok = c.macros[name]
+		if !ok {
+			return "", nil, nil, nil, false
+		}
+		return name, clauses, xs[1:], c.macroEnv, true
+	}
+	name, f, ok := resolveDotMacro(head, env)
+	if !ok || f == nil {
+		return "", nil, nil, nil, false
+	}
+	return name, f.clauses, xs[1:], f.env, true
+}
+
+func isDotCall(v Value) bool {
+	if v.k != KindList || v.IsVec() {
+		return false
+	}
+	xs := filterComments(v.Items())
+	return len(xs) >= 3 && isSymName(xs[0], ".")
+}
+
+func resolveDotMacro(head Value, env *env) (string, *fnVal, bool) {
+	if env == nil || !isDotCall(head) {
+		return "", nil, false
+	}
+	xs := filterComments(head.Items())
+	left := xs[1]
+	if left.k != KindSymbol || left.isKeySym() {
+		return "", nil, false
+	}
+	cur, ok := env.get(left.Name())
 	if !ok {
-		return "", nil, nil, false
+		return "", nil, false
 	}
-	return name, clauses, xs[1:], true
+	for _, k := range xs[2:] {
+		if k.k != KindSymbol || k.isKeySym() {
+			return "", nil, false
+		}
+		if cur.k != KindMap {
+			return "", nil, false
+		}
+		cur, ok = cur.mapData().get(k.Name())
+		if !ok {
+			return "", nil, false
+		}
+	}
+	if cur.k != KindMacro {
+		return "", nil, false
+	}
+	f := cur.fnData()
+	if f == nil {
+		return "", nil, false
+	}
+	name := f.name
+	if name == "" {
+		name = "macro"
+	}
+	return name, f, true
 }
 
 func packExpr(forms []Value, call Value) Value {
@@ -466,8 +524,8 @@ func expandForms(forms []Value, env *env, c *ctx) ([]Value, error) {
 }
 
 func expandIn(v Value, env *env, c *ctx) ([]Value, error) {
-	if name, clauses, args, ok := asMacroCall(v, c); ok {
-		frags, err := applyMacro(name, clauses, args, c, v)
+	if name, clauses, args, defEnv, ok := asMacroCall(v, env, c); ok {
+		frags, err := applyMacro(name, clauses, args, c, v, defEnv)
 		if err != nil {
 			return nil, err
 		}
@@ -482,7 +540,7 @@ func expandIn(v Value, env *env, c *ctx) ([]Value, error) {
 
 func expandTree(v Value, env *env, c *ctx) (Value, error) {
 	switch v.k {
-	case KindComment, KindInt, KindFloat, KindString, KindFn, KindNative, KindQuote, KindUnquote, KindSplice, KindSymbol:
+	case KindComment, KindInt, KindFloat, KindString, KindFn, KindMacro, KindNative, KindQuote, KindUnquote, KindSplice, KindSymbol:
 		return v, nil
 	case KindMap:
 		if v.mapData() == nil {

@@ -1,0 +1,9 @@
+(def (tag)
+  'from-macs)
+
+(defm (unless test @body)
+  (cons 'if (cons 'not (cons test body))))
+
+(defm (announce @rest)
+  '(set-prop 'hit true)
+  @rest)

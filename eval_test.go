@@ -256,6 +256,97 @@ func TestEvalMacros(t *testing.T) {
 	}
 }
 
+func TestEvalImportedMacros(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "macs.writ"), []byte(`
+(def (one) 1)
+(defm (unless test @body)
+  (cons 'if (cons 'not (cons test body))))
+(defm (announce @rest)
+  '(set-prop 'hit true)
+  @rest)
+(defm (from-here x)
+  (cons '+ (cons (one) (cons x '()))))
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	use := filepath.Join(dir, "use.writ")
+	if err := os.WriteFile(use, []byte("(import m: \"macs.writ\")\n(m.unless false 42)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := New()
+	v, err := rt.EvalFile(use)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(42)) {
+		t.Fatalf("keyed unless: %v", v)
+	}
+
+	rt = New(WithSearchPath(dir))
+	v, err = rt.Eval(`
+(let [m: (import "macs.writ")]
+  (m.unless false 41))
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(41)) {
+		t.Fatalf("let unless: %v", v)
+	}
+	v, err = rt.Eval(`
+(let [m: (import "macs.writ")]
+  (m.unless true (no-such)))
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.IsNil() {
+		t.Fatalf("skip unused: %v", v)
+	}
+	v, err = rt.Eval(`
+(let [m: (import "macs.writ")]
+  (m.from-here 2))
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(3)) {
+		t.Fatalf("def env: %v", v)
+	}
+
+	use2 := filepath.Join(dir, "use2.writ")
+	if err := os.WriteFile(use2, []byte(`
+(import m: "macs.writ")
+(def (f)
+  (m.announce (set-prop 'n 7))
+  (get-prop 'n))
+(f)
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt = New()
+	v, err = rt.EvalFile(use2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(7)) {
+		t.Fatalf("announce: %v", v)
+	}
+	if !rt.GetProp("hit").IsTrue() {
+		t.Fatal("announce hit")
+	}
+
+	rt = New(WithSearchPath(dir))
+	_, err = rt.Eval(`
+(let [m: (import "macs.writ")]
+  (map [false] (get m 'unless)))
+`)
+	if err == nil || !strings.Contains(err.Error(), "macro") {
+		t.Fatalf("macro as fn: %v", err)
+	}
+}
+
 func TestEvalMacroFragments(t *testing.T) {
 	rt := New()
 	src := `

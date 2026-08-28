@@ -509,6 +509,11 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 		}
 		s.imports[i].PathForm = p
 	}
+	if rt != nil && rt.Import != nil {
+		if err := evalNamedImports(s.imports, env, c); err != nil {
+			return Program{}, err
+		}
+	}
 
 	var newBoot []Value
 	s.last.ok = false
@@ -1148,6 +1153,10 @@ func containsStr(xs []string, s string) bool {
 
 func makeFnVal(clauses []Clause, env *env) Value {
 	return Value{k: KindFn, p: &fnVal{clauses: clauses, keys: unionKeys(clauses), env: env}}
+}
+
+func makeMacroVal(name string, clauses []Clause, env *env) Value {
+	return Value{k: KindMacro, p: &fnVal{clauses: clauses, keys: unionKeys(clauses), env: env, name: name}}
 }
 
 func installFns(fns []NamedFn, env *env) {

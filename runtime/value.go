@@ -23,6 +23,7 @@ const (
 	KindList
 	KindMap
 	KindFn
+	KindMacro
 	KindQuote
 	KindUnquote
 	KindSplice
@@ -46,6 +47,8 @@ func (k Kind) String() string {
 		return "map"
 	case KindFn:
 		return "fn"
+	case KindMacro:
+		return "macro"
 	case KindQuote:
 		return "quote"
 	case KindUnquote:
@@ -728,6 +731,8 @@ func printVal(v Value) string {
 		return v.Name()
 	case KindFn:
 		return "#<fn>"
+	case KindMacro:
+		return "#<macro>"
 	case KindNative:
 		return printNative(v.p)
 	case KindList:
@@ -793,7 +798,7 @@ func (v Value) Equal(o Value) bool {
 		return v.s == o.s
 	case KindSymbol:
 		return v.h == o.h
-	case KindFn:
+	case KindFn, KindMacro:
 		return false
 	case KindNative:
 		return nativeEqual(v.p, o.p)
