@@ -221,7 +221,7 @@ func (s *compileState) addFn(kind, name string, params Params, body []Value, par
 		mp = s.macroMap
 	}
 	if adj {
-		if _, has := mp[name]; has && !(s.last.ok && s.last.t == kind && s.last.name == name) {
+		if _, has := mp[name]; has && (!s.last.ok || s.last.t != kind || s.last.name != name) {
 			who := "def"
 			if kind == "macro" {
 				who = "defm"
@@ -252,7 +252,7 @@ func (s *compileState) addOn(ev Value, paramsForm Value, body []Value) error {
 		return errMsg("(on event (args...) body) needs a parameter list")
 	}
 	name := ev.Name()
-	if _, has := s.onMap[name]; has && !(s.last.ok && s.last.t == "on" && s.last.name == name) {
+	if _, has := s.onMap[name]; has && (!s.last.ok || s.last.t != "on" || s.last.name != name) {
 		return errf("(on %s ...) must sit next to the last (on %s ...)", name, name)
 	}
 	params, err := parseParams(paramsForm, "on")
