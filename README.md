@@ -44,10 +44,10 @@ Integers are arbitrary-precision. `1` is an integer; `1.0` is a float. `+`, `-`,
 (def (add a b) (+ a b))
 (let [x: 1 y: 2] (+ x y))
 (if (int? n) (+ n 1) else 0)
-(pipe xs (map (fn * #1 2)) (reduce 0 (fn + #1 #2)))
+(pipe xs (list-map (fn * #1 2)) (list-reduce 0 (fn + #1 #2)))
 ```
 
-Lists are `[a b c]`. Maps are `[k: v]` or empty `[:]`. Mixing plain items and `k:` pairs in one `[]` is a parse error. Map keys are symbols: `(get m 'k)`. Required field access is `m.k` or `(. m k)`; a missing key or a non-map left side is an error. `get` still returns `nil` for a missing key. Dots in a symbol name are written with ticks: `` `io.write` ``. `'`, `,`, and `@` apply to the whole dotted token (`'io.write` is quote of `(. io write)`); unquote of only the left is `(. ,m write)`.
+Lists are `[a b c]`. Maps are `[k: v]` or empty `[:]`. Mixing plain items and `k:` pairs in one `[]` is a parse error. Map keys are symbols: `(map-get m 'k)`. Required field access is `m.k` or `(. m k)`; a missing key or a non-map left side is an error. `map-get` still returns `nil` for a missing key. Dots in a symbol name are written with ticks: `` `io.write` ``. `'`, `,`, and `@` apply to the whole dotted token (`'io.write` is quote of `(. io write)`); unquote of only the left is `(. ,m write)`.
 
 A `defm` body is expand-time fragments. Each result is one form at the call site. A top-level `@` splices a list of forms into that sequence. In a `fn` / `let` / `if` / `after` / `on` body, and at the top of a script, a call that expands to several forms is those forms in place. In expression position they run in order and the value is the last form.
 
@@ -59,7 +59,7 @@ A `defm` body is expand-time fragments. Each result is one form at the call site
 
 ## Import
 
-`(import "path")` evaluates another script once per runtime and returns a map of that script's top-level `def` and `defm` names. Names that start with `-` are private and are not exported. It is an expression and may appear in `let`. A `defm` in that map is a macro: `(m.unless …)` expands with unevaluated arguments, for both keyed import and `(let [m: (import "m")] …)`. Passing a macro to `map` (or otherwise applying it as a function) is an error.
+`(import "path")` evaluates another script once per runtime and returns a map of that script's top-level `def` and `defm` names. Names that start with `-` are private and are not exported. It is an expression and may appear in `let`. A `defm` in that map is a macro: `(m.unless …)` expands with unevaluated arguments, for both keyed import and `(let [m: (import "m")] …)`. Passing a macro to `list-map` (or otherwise applying it as a function) is an error.
 
 At the top of a script, keyed import binds names without exporting them:
 

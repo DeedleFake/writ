@@ -392,7 +392,7 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			return Bool(false), nil
 		}
 		return Bool(args[0].Equal(args[1])), nil
-	case "/=":
+	case "!=":
 		if len(args) < 2 {
 			return Bool(true), nil
 		}
@@ -455,12 +455,12 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			y = args[1]
 		}
 		return CallList(x, y), nil
-	case "first":
+	case "head":
 		if len(args) > 0 && args[0].k == KindList && len(args[0].Items()) > 0 {
 			return args[0].Items()[0], nil
 		}
 		return Nil, nil
-	case "rest":
+	case "tail":
 		if len(args) > 0 && args[0].k == KindList {
 			return CallList(args[0].Items()[1:]...), nil
 		}
@@ -488,11 +488,11 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			}
 		}
 		return CallList(out...), nil
-	case "map":
+	case "list-map":
 		if len(args) < 2 {
-			return Value{}, errMsg("map needs a list or map, and a function")
+			return Value{}, errMsg("list-map needs a list or map, and a function")
 		}
-		seq, err := asSeq(args[0], "map")
+		seq, err := asSeq(args[0], "list-map")
 		if err != nil {
 			return Value{}, err
 		}
@@ -505,11 +505,11 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			}
 		}
 		return List(out...), nil
-	case "filter":
+	case "list-filter":
 		if len(args) < 2 {
-			return Value{}, errMsg("filter needs a list or map, and a function")
+			return Value{}, errMsg("list-filter needs a list or map, and a function")
 		}
-		seq, err := asSeq(args[0], "filter")
+		seq, err := asSeq(args[0], "list-filter")
 		if err != nil {
 			return Value{}, err
 		}
@@ -525,11 +525,11 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			}
 		}
 		return List(out...), nil
-	case "reduce":
+	case "list-reduce":
 		if len(args) < 3 {
-			return Value{}, errMsg("reduce needs a list or map, an init, and a function")
+			return Value{}, errMsg("list-reduce needs a list or map, an init, and a function")
 		}
-		seq, err := asSeq(args[0], "reduce")
+		seq, err := asSeq(args[0], "list-reduce")
 		if err != nil {
 			return Value{}, err
 		}
@@ -542,9 +542,9 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			}
 		}
 		return acc, nil
-	case "pairs":
+	case "map-to-list":
 		if len(args) == 0 || args[0].k != KindMap {
-			return Value{}, errMsg("pairs needs a map")
+			return Value{}, errMsg("map-to-list needs a map")
 		}
 		var out []Value
 		if args[0].mapData() != nil {
@@ -553,31 +553,31 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			}
 		}
 		return List(out...), nil
-	case "from-pairs":
+	case "list-to-map":
 		if len(args) == 0 || args[0].k != KindList {
-			return Value{}, errMsg("from-pairs needs a list")
+			return Value{}, errMsg("list-to-map needs a list")
 		}
 		m := newMap()
 		for _, p := range args[0].Items() {
-			k, val, err := asPair(p, "from-pairs")
+			k, val, err := asPair(p, "list-to-map")
 			if err != nil {
 				return Value{}, err
 			}
 			m.put(k, val)
 		}
 		return Value{k: KindMap, p: m}, nil
-	case "keys":
+	case "map-keys":
 		if len(args) == 0 || args[0].k != KindMap {
-			return Value{}, errMsg("keys needs a map")
+			return Value{}, errMsg("map-keys needs a map")
 		}
 		var out []Value
 		if args[0].mapData() != nil {
 			out = append(out, args[0].mapData().keys...)
 		}
 		return List(out...), nil
-	case "vals":
+	case "map-vals":
 		if len(args) == 0 || args[0].k != KindMap {
-			return Value{}, errMsg("vals needs a map")
+			return Value{}, errMsg("map-vals needs a map")
 		}
 		var out []Value
 		if args[0].mapData() != nil {
@@ -623,42 +623,42 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 			return Symbol(a.s), nil
 		}
 		return Value{}, errMsg("symbol needs a string")
-	case "get":
+	case "map-get":
 		if len(args) < 2 {
-			return Value{}, errMsg("get needs a map and a key")
+			return Value{}, errMsg("map-get needs a map and a key")
 		}
 		if args[0].k != KindMap {
-			return Value{}, errMsg("get needs a map")
+			return Value{}, errMsg("map-get needs a map")
 		}
-		path, err := asPath(args[1], "get")
+		path, err := asPath(args[1], "map-get")
 		if err != nil {
 			return Value{}, err
 		}
-		return mapGetPath(args[0], path, "get")
-	case "set":
+		return mapGetPath(args[0], path, "map-get")
+	case "map-set":
 		if len(args) < 3 {
-			return Value{}, errMsg("set needs a map, a key, and a value")
+			return Value{}, errMsg("map-set needs a map, a key, and a value")
 		}
 		if args[0].k != KindMap {
-			return Value{}, errMsg("set needs a map")
+			return Value{}, errMsg("map-set needs a map")
 		}
-		path, err := asPath(args[1], "set")
+		path, err := asPath(args[1], "map-set")
 		if err != nil {
 			return Value{}, err
 		}
-		return mapSetPath(args[0], path, args[2], "set")
-	case "update":
+		return mapSetPath(args[0], path, args[2], "map-set")
+	case "map-update":
 		if len(args) < 3 {
-			return Value{}, errMsg("update needs a map, a key, and a function")
+			return Value{}, errMsg("map-update needs a map, a key, and a function")
 		}
 		if args[0].k != KindMap {
-			return Value{}, errMsg("update needs a map")
+			return Value{}, errMsg("map-update needs a map")
 		}
-		path, err := asPath(args[1], "update")
+		path, err := asPath(args[1], "map-update")
 		if err != nil {
 			return Value{}, err
 		}
-		cur, err := mapGetPath(args[0], path, "update")
+		cur, err := mapGetPath(args[0], path, "map-update")
 		if err != nil {
 			return Value{}, err
 		}
@@ -666,18 +666,18 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		if err != nil {
 			return Value{}, err
 		}
-		return mapSetPath(args[0], path, next, "update")
-	case "get-prop":
+		return mapSetPath(args[0], path, next, "map-update")
+	case "prop-get":
 		key := Nil
 		if len(args) > 0 {
 			key = args[0]
 		}
-		path, err := asPath(key, "get-prop")
+		path, err := asPath(key, "prop-get")
 		if err != nil {
 			return Value{}, err
 		}
-		return getPropPath(c.rt, path, "get-prop")
-	case "set-prop":
+		return getPropPath(c.rt, path, "prop-get")
+	case "prop-set":
 		key := Nil
 		if len(args) > 0 {
 			key = args[0]
@@ -686,20 +686,20 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		if len(args) > 1 {
 			val = args[1]
 		}
-		path, err := asPath(key, "set-prop")
+		path, err := asPath(key, "prop-set")
 		if err != nil {
 			return Value{}, err
 		}
-		return setPropPath(c.rt, path, val, "set-prop")
-	case "update-prop":
+		return setPropPath(c.rt, path, val, "prop-set")
+	case "prop-update":
 		if len(args) < 2 {
-			return Value{}, errMsg("update-prop needs a name and a function")
+			return Value{}, errMsg("prop-update needs a name and a function")
 		}
-		path, err := asPath(args[0], "update-prop")
+		path, err := asPath(args[0], "prop-update")
 		if err != nil {
 			return Value{}, err
 		}
-		cur, err := getPropPath(c.rt, path, "update-prop")
+		cur, err := getPropPath(c.rt, path, "prop-update")
 		if err != nil {
 			return Value{}, err
 		}
@@ -707,15 +707,15 @@ func callBuiltin(name string, call callParts, c *ctx) (Value, error) {
 		if err != nil {
 			return Value{}, err
 		}
-		if _, err := setPropPath(c.rt, path, next, "update-prop"); err != nil {
+		if _, err := setPropPath(c.rt, path, next, "prop-update"); err != nil {
 			return Value{}, err
 		}
 		return next, nil
-	case "merge":
+	case "map-merge":
 		m := newMap()
 		for _, a := range args {
 			if a.k != KindMap {
-				return Value{}, errMsg("merge needs maps")
+				return Value{}, errMsg("map-merge needs maps")
 			}
 			if a.mapData() == nil {
 				continue

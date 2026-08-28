@@ -20,7 +20,7 @@ func TestImportWritFile(t *testing.T) {
 	use := filepath.Join(dir, "use.writ")
 	if err := os.WriteFile(use, []byte(`
 (let [m: (import "lib.writ")]
-  ((get m 'inc) 41))
+  ((map-get m 'inc) 41))
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +78,7 @@ func TestRegisterPackage(t *testing.T) {
 	})
 	v, err := rt.Eval(`
 (let [m: (import "mathx")]
-  (+ ((get m 'double) 3) 0))
+  (+ ((map-get m 'double) 3) 0))
 `)
 	if err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestRegisterPackage(t *testing.T) {
 	}
 	res := rt.Check(`
 (let [m: (import "mathx")]
-  ((get m 'double) 3))
+  ((map-get m 'double) 3))
 `)
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("check native: %v", res.Diagnostics)
@@ -105,7 +105,7 @@ func TestRegisterPackageSimple(t *testing.T) {
 		},
 		Vals: map[string]runtime.Value{"n": runtime.Int64(1)},
 	})
-	v, err := rt.Eval(`(get (import "hello") 'n)`)
+	v, err := rt.Eval(`(map-get (import "hello") 'n)`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -147,7 +147,7 @@ func TestAfterNoSleep(t *testing.T) {
 		delays = append(delays, d)
 		jobs = append(jobs, fn)
 	}))
-	if _, err := rt.Eval(`(after 0.5 (set-prop 'x 1))`); err != nil {
+	if _, err := rt.Eval(`(after 0.5 (prop-set 'x 1))`); err != nil {
 		t.Fatal(err)
 	}
 	if len(jobs) != 1 {
@@ -184,7 +184,7 @@ func TestImportedHandlersUseLibEnv(t *testing.T) {
 	dir := t.TempDir()
 	lib := filepath.Join(dir, "lib.writ")
 	if err := os.WriteFile(lib, []byte(`
-(def (handle n) (set-prop 'x n))
+(def (handle n) (prop-set 'x n))
 (on tick (n) (handle n))
 `), 0o644); err != nil {
 		t.Fatal(err)
@@ -208,7 +208,7 @@ func TestImportedHandlersUseLibEnv(t *testing.T) {
 func TestEvalFileOnAccumulates(t *testing.T) {
 	dir := t.TempDir()
 	src := filepath.Join(dir, "on.writ")
-	if err := os.WriteFile(src, []byte("(on ping () (update-prop 'n (fn + #1 1)))\n"), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte("(on ping () (prop-update 'n (fn + #1 1)))\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rt := New()
@@ -244,7 +244,7 @@ func TestEvalFileOnAccumulates(t *testing.T) {
 
 func TestFirePositionalWithoutRegisterEvent(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval(`(on ping (who) (set-prop 'w who))`); err != nil {
+	if _, err := rt.Eval(`(on ping (who) (prop-set 'w who))`); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.Fire("ping", map[string]runtime.Value{"who": runtime.String("ada")}); err != nil {
@@ -259,7 +259,7 @@ func TestFireKeywordAndMissingKey(t *testing.T) {
 	rt := New()
 	if _, err := rt.Eval(`
 (on ping (who:)
-  (set-prop 'w who))
+  (prop-set 'w who))
 `); err != nil {
 		t.Fatal(err)
 	}
@@ -273,7 +273,7 @@ func TestFireKeywordAndMissingKey(t *testing.T) {
 	rt2.RegisterEvent("ping", types.PayloadKey{Name: "who", Type: types.StringType()})
 	if _, err := rt2.Eval(`
 (on ping (who)
-  (set-prop 'w who))
+  (prop-set 'w who))
 `); err != nil {
 		t.Fatal(err)
 	}
@@ -289,7 +289,7 @@ func TestFireKeywordIgnoresExtraPayload(t *testing.T) {
 	rt := New()
 	if _, err := rt.Eval(`
 (on ping (who:)
-  (set-prop 'w who))
+  (prop-set 'w who))
 `); err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestFireKeywordIgnoresExtraPayload(t *testing.T) {
 	rt.RegisterEvent("pong", types.PayloadKey{Name: "who", Type: types.StringType()}, types.PayloadKey{Name: "n", Type: types.IntType()})
 	if _, err := rt.Eval(`
 (on pong (who:)
-  (set-prop 'p who))
+  (prop-set 'p who))
 `); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +323,7 @@ func TestMainLookupApplyImport(t *testing.T) {
 	if err := os.WriteFile(main, []byte(`
 (def (main)
   (let [m: (import "lib.writ")]
-    ((get m 'inc) 41)))
+    ((map-get m 'inc) 41)))
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -366,7 +366,7 @@ func TestWithSearchPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	src := filepath.Join(dir, "use.writ")
-	if err := os.WriteFile(src, []byte(`((get (import "lib.writ") 'n))`), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(`((map-get (import "lib.writ") 'n))`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	rt := New(WithSearchPath(libdir))
@@ -423,7 +423,7 @@ func TestHostBuiltinCanGetProp(t *testing.T) {
 	}, types.PosRestArrow(types.Any())); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval(`(set-prop 'x 3)`); err != nil {
+	if _, err := rt.Eval(`(prop-set 'x 3)`); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
@@ -473,7 +473,7 @@ func TestImportRejectsNonWrit(t *testing.T) {
 		t.Fatal(err)
 	}
 	use2 := filepath.Join(dir, "use2.writ")
-	if err := os.WriteFile(use2, []byte(`((get (import "ok.writ") 'n))`), 0o644); err != nil {
+	if err := os.WriteFile(use2, []byte(`((map-get (import "ok.writ") 'n))`), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	v, err := New().EvalFile(use2)
@@ -519,7 +519,7 @@ func TestImportDeniesAbsoluteAndDotDot(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = v
-	v, err = New(WithAllowAbsoluteImports()).Eval(`((get (import "` + filepath.ToSlash(abs) + `") 'n))`)
+	v, err = New(WithAllowAbsoluteImports()).Eval(`((map-get (import "` + filepath.ToSlash(abs) + `") 'n))`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,7 +542,7 @@ func TestSearchPathSkipsCwd(t *testing.T) {
 	if _, err := rt.Eval(`(import "lib.writ")`); err == nil {
 		t.Fatal("cwd lib.writ should not be imported when search path is set")
 	}
-	v, err := rt.Eval(`((get (import "other.writ") 'n))`)
+	v, err := rt.Eval(`((map-get (import "other.writ") 'n))`)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -1343,7 +1343,7 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 			return FloatType()
 		}
 		return numType()
-	case "=", "/=":
+	case "=", "!=":
 		return BoolType()
 	case "<", ">", "<=", ">=":
 		a, b := NilType(), NilType()
@@ -1416,7 +1416,7 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 		default:
 			return tList(el)
 		}
-	case "first":
+	case "head":
 		xs := NilType()
 		if len(pos) > 0 {
 			xs = unwrap(pos[0])
@@ -1434,7 +1434,7 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 		default:
 			return tDyn(Any())
 		}
-	case "rest":
+	case "tail":
 		xs := NilType()
 		if len(pos) > 0 {
 			xs = unwrap(pos[0])
@@ -1467,32 +1467,32 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 		}
 	case "append":
 		return tList(Any())
-	case "map", "filter":
+	case "list-map", "list-filter":
 		return tList(tDyn(Any()))
-	case "reduce":
+	case "list-reduce":
 		init := Any()
 		if len(pos) > 1 {
 			init = pos[1]
 		}
 		return tDyn(init)
-	case "pairs":
+	case "map-to-list":
 		arg := NilType()
 		if len(pos) > 0 {
 			arg = pos[0]
 		}
 		chk.expect(arg, mapyType(), at(0), name)
 		return tList(Tuple(SymbolType(), Any()))
-	case "from-pairs":
+	case "list-to-map":
 		anyT := Any()
 		return tDyn(tMap(nil, &anyT))
-	case "keys":
+	case "map-keys":
 		arg := NilType()
 		if len(pos) > 0 {
 			arg = pos[0]
 		}
 		chk.expect(arg, mapyType(), at(0), name)
 		return tList(SymbolType())
-	case "vals":
+	case "map-vals":
 		arg := NilType()
 		if len(pos) > 0 {
 			arg = pos[0]
@@ -1533,13 +1533,13 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 		}
 		chk.expect(pos[0], tOr([]Type{stringyType(), SymbolType(), UnknownSymbol(), BoolType(), NilType()}), at(0), "symbol")
 		return UnknownSymbol()
-	case "get":
+	case "map-get":
 		if len(pos) < 2 {
-			chk.err(form, "get needs a map and a key")
+			chk.err(form, "map-get needs a map and a key")
 			return tDyn(Any())
 		}
-		chk.expect(pos[0], mapyType(), at(0), "get")
-		chk.expect(pos[1], pathWant(), at(1), "get")
+		chk.expect(pos[0], mapyType(), at(0), "map-get")
+		chk.expect(pos[1], pathWant(), at(1), "map-get")
 		m := unwrap(pos[0])
 		pk := pathKeys(pos[1])
 		if pk.none {
@@ -1565,13 +1565,13 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 			return typeMapGet(m, pk.keys)
 		}
 		return tDyn(Any())
-	case "set":
+	case "map-set":
 		if len(pos) < 3 {
-			chk.err(form, "set needs a map, a key, and a value")
+			chk.err(form, "map-set needs a map, a key, and a value")
 			return tDyn(Any())
 		}
-		chk.expect(pos[0], mapyType(), at(0), "set")
-		chk.expect(pos[1], pathWant(), at(1), "set")
+		chk.expect(pos[0], mapyType(), at(0), "map-set")
+		chk.expect(pos[1], pathWant(), at(1), "map-set")
 		pk := pathKeys(pos[1])
 		val := pos[2]
 		if pk.none {
@@ -1582,13 +1582,13 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 			return tDyn(tMap(nil, &anyT))
 		}
 		return typeMapSet(pos[0], pk.keys, val)
-	case "update":
+	case "map-update":
 		if len(pos) < 3 {
-			chk.err(form, "update needs a map, a key, and a function")
+			chk.err(form, "map-update needs a map, a key, and a function")
 			return tDyn(Any())
 		}
-		chk.expect(pos[0], mapyType(), at(0), "update")
-		chk.expect(pos[1], pathWant(), at(1), "update")
+		chk.expect(pos[0], mapyType(), at(0), "map-update")
+		chk.expect(pos[1], pathWant(), at(1), "map-update")
 		pk := pathKeys(pos[1])
 		var cur Type
 		switch {
@@ -1608,12 +1608,12 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 			return tDyn(tMap(nil, &anyT))
 		}
 		return typeMapSet(pos[0], pk.keys, ret)
-	case "get-prop":
+	case "prop-get":
 		arg := NilType()
 		if len(pos) > 0 {
 			arg = pos[0]
 		}
-		chk.expect(arg, pathWant(), at(0), "get-prop")
+		chk.expect(arg, pathWant(), at(0), "prop-get")
 		pk := pathKeys(arg)
 		if pk.none {
 			return NilType()
@@ -1622,7 +1622,7 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 			return tDyn(Any())
 		}
 		return propLeafType(chk.props[pk.keys[0]], pk.keys[1:])
-	case "set-prop":
+	case "prop-set":
 		arg := NilType()
 		if len(pos) > 0 {
 			arg = pos[0]
@@ -1631,7 +1631,7 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 		if len(pos) > 1 {
 			val = pos[1]
 		}
-		chk.expect(arg, pathWant(), at(0), "set-prop")
+		chk.expect(arg, pathWant(), at(0), "prop-set")
 		pk := pathKeys(arg)
 		if !pk.none && !pk.unknown && chk.pass == 0 {
 			root := pk.keys[0]
@@ -1640,12 +1640,12 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form runtime.Value
 			chk.props[root] = list
 		}
 		return val
-	case "update-prop":
+	case "prop-update":
 		return chk.typeUpdateProp(pos, form, raw)
-	case "merge":
+	case "map-merge":
 		acc := EmptyMapType()
 		for i, p := range pos {
-			chk.expect(p, mapyType(), at(i), "merge")
+			chk.expect(p, mapyType(), at(i), "map-merge")
 			m := unwrap(p)
 			if acc.k == tyEmptyMap && m.k == tyMap {
 				acc = m
@@ -1697,10 +1697,10 @@ func (chk *checker) typeUpdateProp(pos []Type, form runtime.Value, raw []runtime
 		return form
 	}
 	if len(pos) < 2 {
-		chk.err(form, "update-prop needs a name and a function")
+		chk.err(form, "prop-update needs a name and a function")
 		return tDyn(Any())
 	}
-	chk.expect(pos[0], pathWant(), at(0), "update-prop")
+	chk.expect(pos[0], pathWant(), at(0), "prop-update")
 	pk := pathKeys(pos[0])
 	cur := tDyn(Any())
 	var root string

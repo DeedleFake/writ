@@ -86,7 +86,7 @@ func TestFormatRoundTrip(t *testing.T) {
 		"'(+ 1 2)\n",
 		"(if x\n  1\nelse\n  2)\n",
 		"(fn (n)\n  (+ n 1))\n",
-		"(pipe xs\n  (map f)\n  (reduce 0 g))\n",
+		"(pipe xs\n  (list-map f)\n  (list-reduce 0 g))\n",
 		"(let [x: 1]\n  x)\n",
 		"(on ev (k:)\n  k)\n",
 		"1.0\n",

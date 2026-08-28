@@ -21,7 +21,7 @@ func TestPluginLoad(t *testing.T) {
 		t.Skipf("plugin build failed (common in tests): %s", out)
 	}
 	rt := New(WithNativePlugins(), WithAllowAbsoluteImports())
-	v, err := rt.Eval(`(get (import "` + filepath.ToSlash(so) + `") 'version)`)
+	v, err := rt.Eval(`(map-get (import "` + filepath.ToSlash(so) + `") 'version)`)
 	if err != nil {
 		t.Skipf("plugin.Open failed: %v", err)
 	}

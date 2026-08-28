@@ -180,16 +180,16 @@ func (m *Machine) GetPropLocked(path ...string) Value {
 	if len(path) == 0 {
 		return Nil
 	}
-	v, _ := getPropPath(m, path, "get-prop")
+	v, _ := getPropPath(m, path, "prop-get")
 	return v
 }
 
 // SetPropLocked writes the script store. Caller must hold Lock.
 func (m *Machine) SetPropLocked(val Value, path ...string) error {
 	if len(path) == 0 {
-		return errMsg("set-prop needs a key")
+		return errMsg("prop-set needs a key")
 	}
-	_, err := setPropPath(m, path, val, "set-prop")
+	_, err := setPropPath(m, path, val, "prop-set")
 	return err
 }
 

@@ -5,5 +5,5 @@
   (cons 'if (cons 'not (cons test body))))
 
 (defm (announce @rest)
-  '(set-prop 'hit true)
+  '(prop-set 'hit true)
   @rest)
