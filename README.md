@@ -91,6 +91,8 @@ Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbs
 
 ```go
 import (
+    "strings"
+
     "deedles.dev/writ"
     "deedles.dev/writ/runtime"
     "deedles.dev/writ/types"
@@ -111,7 +113,7 @@ rt.SetScheduler(func(d time.Duration, fn func()) { /* own loop */ })
 
 if _, err := rt.EvalFile("script.writ"); err != nil { ... }
 _ = rt.Fire("tick", map[string]runtime.Value{"n": runtime.Int64(1)})
-res := rt.Check(src) // diagnostics and type hints
+res := rt.Check(strings.NewReader(src)) // diagnostics and type hints
 ```
 
 A native plugin exports:
@@ -127,8 +129,10 @@ Build with `go build -buildmode=plugin`. In-process `RegisterPackage` is the emb
 Editors and formatters import the package that owns the name:
 
 ```go
-forms, err := parser.Parse(src)
-text, err := parser.Format(src)
-toks := scanner.Tokenize(src)
-res := rt.Check(src)
+forms, err := parser.Parse(strings.NewReader(src))
+err = parser.Format(strings.NewReader(src), w)
+s := scanner.New(strings.NewReader(src))
+s.SetHighlight(true) // editors; parser leaves this off
+tok, err := s.Next()
+res := rt.Check(strings.NewReader(src))
 ```

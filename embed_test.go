@@ -76,20 +76,20 @@ func TestRegisterPackage(t *testing.T) {
 			"pi": runtime.Float(3.25),
 		},
 	})
-	v, err := rt.Eval(`
+	v, err := rt.Eval(rd(`
 (let [m: (import "mathx")]
   (+ ((map-get m 'double) 3) 0))
-`)
+`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !v.Equal(runtime.Int64(6)) {
 		t.Fatalf("native: %v", v)
 	}
-	res := rt.Check(`
+	res := rt.Check(rd(`
 (let [m: (import "mathx")]
   ((map-get m 'double) 3))
-`)
+`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("check native: %v", res.Diagnostics)
 	}
@@ -105,7 +105,7 @@ func TestRegisterPackageSimple(t *testing.T) {
 		},
 		Vals: map[string]runtime.Value{"n": runtime.Int64(1)},
 	})
-	v, err := rt.Eval(`(map-get (import "hello") 'n)`)
+	v, err := rt.Eval(rd(`(map-get (import "hello") 'n)`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,10 +126,10 @@ func TestHostBuiltinAndEvent(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt.RegisterEvent("ping", types.PayloadKey{Name: "who", Type: types.StringType()})
-	if _, err := rt.Eval(`
+	if _, err := rt.Eval(rd(`
 (on ping (who)
   (log who))
-`); err != nil {
+`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.Fire("ping", map[string]runtime.Value{"who": runtime.String("ada")}); err != nil {
@@ -147,7 +147,7 @@ func TestAfterNoSleep(t *testing.T) {
 		delays = append(delays, d)
 		jobs = append(jobs, fn)
 	}))
-	if _, err := rt.Eval(`(after 0.5 (prop-set 'x 1))`); err != nil {
+	if _, err := rt.Eval(rd(`(after 0.5 (prop-set 'x 1))`)); err != nil {
 		t.Fatal(err)
 	}
 	if len(jobs) != 1 {
@@ -164,7 +164,7 @@ func TestAfterNoSleep(t *testing.T) {
 
 func TestEvalLimit(t *testing.T) {
 	rt := New(WithEvalLimit(5))
-	if _, err := rt.Eval("(+ 1 2 3 4 5 6 7 8)"); err == nil {
+	if _, err := rt.Eval(rd("(+ 1 2 3 4 5 6 7 8)")); err == nil {
 		t.Fatal("expected budget error")
 	}
 }
@@ -244,7 +244,7 @@ func TestEvalFileOnAccumulates(t *testing.T) {
 
 func TestFirePositionalWithoutRegisterEvent(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval(`(on ping (who) (prop-set 'w who))`); err != nil {
+	if _, err := rt.Eval(rd(`(on ping (who) (prop-set 'w who))`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.Fire("ping", map[string]runtime.Value{"who": runtime.String("ada")}); err != nil {
@@ -257,10 +257,10 @@ func TestFirePositionalWithoutRegisterEvent(t *testing.T) {
 
 func TestFireKeywordAndMissingKey(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval(`
+	if _, err := rt.Eval(rd(`
 (on ping (who:)
   (prop-set 'w who))
-`); err != nil {
+`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.Fire("ping", map[string]runtime.Value{"who": runtime.String("ada")}); err != nil {
@@ -271,10 +271,10 @@ func TestFireKeywordAndMissingKey(t *testing.T) {
 	}
 	rt2 := New()
 	rt2.RegisterEvent("ping", types.PayloadKey{Name: "who", Type: types.StringType()})
-	if _, err := rt2.Eval(`
+	if _, err := rt2.Eval(rd(`
 (on ping (who)
   (prop-set 'w who))
-`); err != nil {
+`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt2.Fire("ping", map[string]runtime.Value{}); err != nil {
@@ -287,10 +287,10 @@ func TestFireKeywordAndMissingKey(t *testing.T) {
 
 func TestFireKeywordIgnoresExtraPayload(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval(`
+	if _, err := rt.Eval(rd(`
 (on ping (who:)
   (prop-set 'w who))
-`); err != nil {
+`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.Fire("ping", map[string]runtime.Value{"who": runtime.String("ada"), "n": runtime.Int64(1)}); err != nil {
@@ -300,10 +300,10 @@ func TestFireKeywordIgnoresExtraPayload(t *testing.T) {
 		t.Fatalf("extra payload keys skipped handler: %v", rt.GetProp("w"))
 	}
 	rt.RegisterEvent("pong", types.PayloadKey{Name: "who", Type: types.StringType()}, types.PayloadKey{Name: "n", Type: types.IntType()})
-	if _, err := rt.Eval(`
+	if _, err := rt.Eval(rd(`
 (on pong (who:)
   (prop-set 'p who))
-`); err != nil {
+`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.Fire("pong", map[string]runtime.Value{"who": runtime.String("ada"), "n": runtime.Int64(1)}); err != nil {
@@ -348,7 +348,7 @@ func TestRegisterPrintStdout(t *testing.T) {
 	var buf bytes.Buffer
 	rt := New(WithStdout(&buf))
 	rt.RegisterPrint()
-	if _, err := rt.Eval(`(print "x")`); err != nil {
+	if _, err := rt.Eval(rd(`(print "x")`)); err != nil {
 		t.Fatal(err)
 	}
 	if buf.String() != "x\n" {
@@ -386,7 +386,7 @@ func TestAfterErrorHook(t *testing.T) {
 		WithScheduler(func(_ time.Duration, fn func()) { jobs = append(jobs, fn) }),
 		WithAfterError(func(err error) { got = err }),
 	)
-	if _, err := rt.Eval(`(after 0 (+ 1 "x"))`); err != nil {
+	if _, err := rt.Eval(rd(`(after 0 (+ 1 "x"))`)); err != nil {
 		t.Fatal(err)
 	}
 	jobs[0]()
@@ -401,7 +401,7 @@ func TestAfterErrorHookCanGetProp(t *testing.T) {
 	rt.SetAfterError(func(err error) {
 		_ = rt.GetProp("x")
 	})
-	if _, err := rt.Eval(`(after 0 (+ 1 "x"))`); err != nil {
+	if _, err := rt.Eval(rd(`(after 0 (+ 1 "x"))`)); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan struct{})
@@ -423,12 +423,12 @@ func TestHostBuiltinCanGetProp(t *testing.T) {
 	}, types.PosRestArrow(types.Any())); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval(`(prop-set 'x 3)`); err != nil {
+	if _, err := rt.Eval(rd(`(prop-set 'x 3)`)); err != nil {
 		t.Fatal(err)
 	}
 	done := make(chan error, 1)
 	go func() {
-		v, err := rt.Eval(`(gp)`)
+		v, err := rt.Eval(rd(`(gp)`))
 		if err != nil {
 			done <- err
 			return
@@ -503,7 +503,7 @@ func TestImportDeniesAbsoluteAndDotDot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = New().Eval(`(import "` + filepath.ToSlash(abs) + `")`)
+	_, err = New().Eval(rd(`(import "` + filepath.ToSlash(abs) + `")`))
 	if err == nil || !strings.Contains(err.Error(), "absolute") {
 		t.Fatalf("absolute: %v", err)
 	}
@@ -519,7 +519,7 @@ func TestImportDeniesAbsoluteAndDotDot(t *testing.T) {
 		t.Fatal(err)
 	}
 	_ = v
-	v, err = New(WithAllowAbsoluteImports()).Eval(`((map-get (import "` + filepath.ToSlash(abs) + `") 'n))`)
+	v, err = New(WithAllowAbsoluteImports()).Eval(rd(`((map-get (import "` + filepath.ToSlash(abs) + `") 'n))`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -539,10 +539,10 @@ func TestSearchPathSkipsCwd(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := New(WithSearchPath(libdir))
-	if _, err := rt.Eval(`(import "lib.writ")`); err == nil {
+	if _, err := rt.Eval(rd(`(import "lib.writ")`)); err == nil {
 		t.Fatal("cwd lib.writ should not be imported when search path is set")
 	}
-	v, err := rt.Eval(`((map-get (import "other.writ") 'n))`)
+	v, err := rt.Eval(rd(`((map-get (import "other.writ") 'n))`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +552,7 @@ func TestSearchPathSkipsCwd(t *testing.T) {
 }
 
 func TestPluginsDisabledByDefault(t *testing.T) {
-	_, err := New().Eval(`(import "missing.so")`)
+	_, err := New().Eval(rd(`(import "missing.so")`))
 	if err == nil || !strings.Contains(err.Error(), "plugin") {
 		t.Fatalf("got %v", err)
 	}

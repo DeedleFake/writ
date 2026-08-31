@@ -21,7 +21,7 @@ func TestPluginLoad(t *testing.T) {
 		t.Skipf("plugin build failed (common in tests): %s", out)
 	}
 	rt := New(WithNativePlugins(), WithAllowAbsoluteImports())
-	v, err := rt.Eval(`(map-get (import "` + filepath.ToSlash(so) + `") 'version)`)
+	v, err := rt.Eval(rd(`(map-get (import "` + filepath.ToSlash(so) + `") 'version)`))
 	if err != nil {
 		t.Skipf("plugin.Open failed: %v", err)
 	}
@@ -31,7 +31,7 @@ func TestPluginLoad(t *testing.T) {
 }
 
 func TestPluginMissingAndGarbage(t *testing.T) {
-	_, err := New(WithNativePlugins()).Eval(`(import "definitely-missing-plugin.so")`)
+	_, err := New(WithNativePlugins()).Eval(rd(`(import "definitely-missing-plugin.so")`))
 	if err == nil {
 		t.Fatal("expected missing plugin error")
 	}
@@ -41,7 +41,7 @@ func TestPluginMissingAndGarbage(t *testing.T) {
 		t.Fatal(err)
 	}
 	rt := New(WithNativePlugins(), WithAllowAbsoluteImports())
-	_, err = rt.Eval(`(import "` + filepath.ToSlash(so) + `")`)
+	_, err = rt.Eval(rd(`(import "` + filepath.ToSlash(so) + `")`))
 	if err == nil {
 		t.Fatal("expected garbage plugin error")
 	}

@@ -1,6 +1,7 @@
 package writ
 
 import (
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -242,22 +243,23 @@ func (rt *Runtime) Reset() {
 	rt.checkLoading = nil
 }
 
-// Check type-checks src.
-func (rt *Runtime) Check(src string) types.CheckResult {
+// Check type-checks source from r.
+func (rt *Runtime) Check(r io.Reader) types.CheckResult {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	rt.m.BeginBudget()
 	rt.m.SetChecking(true)
 	defer rt.m.SetChecking(false)
-	return rt.checkSrc(src, rt.m.File())
+	return rt.checkSrc(r, rt.m.File())
 }
 
 // CheckFile type-checks a file.
 func (rt *Runtime) CheckFile(path string) types.CheckResult {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return types.CheckResult{Diagnostics: []types.Diagnostic{{Message: err.Error()}}}
 	}
+	defer f.Close()
 	abs, _ := filepath.Abs(path)
 	rt.m.Lock()
 	defer rt.m.Unlock()
@@ -269,21 +271,21 @@ func (rt *Runtime) CheckFile(path string) types.CheckResult {
 		rt.m.SetChecking(false)
 		rt.m.SetFile(prev)
 	}()
-	return rt.checkSrc(string(data), abs)
+	return rt.checkSrc(f, abs)
 }
 
-// Eval compiles and evaluates src (boot forms only). Defs, macros, and
+// Eval compiles and evaluates source from r (boot forms only). Defs, macros, and
 // handlers persist on this runtime until [Runtime.Reset]; later Eval
 // calls expand using those macros. Redefining a function replaces it
 // (clauses are not merged across calls). A name cannot be both a
 // function and a macro. (on ...) handlers accumulate across Eval calls.
-func (rt *Runtime) Eval(src string) (runtime.Value, error) {
-	forms, err := parser.Parse(src)
+func (rt *Runtime) Eval(r io.Reader) (runtime.Value, error) {
+	forms, err := parser.Parse(r)
 	if err != nil {
 		rt.m.Lock()
 		file := rt.m.File()
 		rt.m.Unlock()
-		return runtime.Value{}, runtime.AsError(err).WithFile(file)
+		return runtime.Value{}, parseErr(err, file)
 	}
 	rt.m.Lock()
 	defer rt.m.Unlock()
@@ -295,23 +297,32 @@ func (rt *Runtime) Eval(src string) (runtime.Value, error) {
 // Persistence is the same as [Runtime.Eval]; call [Runtime.Reset]
 // before reloading a file if (on ...) handlers should not stack.
 func (rt *Runtime) EvalFile(path string) (runtime.Value, error) {
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return runtime.Value{}, err
 	}
+	defer f.Close()
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		abs = path
 	}
-	forms, err := parser.Parse(string(data))
+	forms, err := parser.Parse(f)
 	if err != nil {
-		return runtime.Value{}, runtime.AsError(err).WithFile(abs)
+		return runtime.Value{}, parseErr(err, abs)
 	}
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	rt.m.BeginBudget()
 	rt.m.SetFile(abs)
 	return rt.m.EvalLocked(forms)
+}
+
+func parseErr(err error, file string) error {
+	var e *runtime.Error
+	if errors.As(err, &e) {
+		return e.WithFile(file)
+	}
+	return err
 }
 
 // Apply calls fn with positional args.
@@ -340,10 +351,7 @@ func (rt *Runtime) typeConfig(file string) types.Config {
 	}
 }
 
-func (rt *Runtime) checkSrc(src, file string) types.CheckResult {
-	if strings.TrimSpace(src) == "" {
-		return types.CheckResult{}
-	}
+func (rt *Runtime) checkSrc(r io.Reader, file string) types.CheckResult {
 	if file != "" {
 		if slices.Contains(rt.checkLoading, file) {
 			return types.CheckResult{Diagnostics: []types.Diagnostic{{Message: "import cycle: " + file}}}
@@ -351,7 +359,7 @@ func (rt *Runtime) checkSrc(src, file string) types.CheckResult {
 		rt.checkLoading = append(rt.checkLoading, file)
 		defer func() { rt.checkLoading = rt.checkLoading[:len(rt.checkLoading)-1] }()
 	}
-	parsed, err := parser.Parse(src)
+	parsed, err := parser.Parse(r)
 	if err != nil {
 		e := runtime.AsError(err)
 		end := e.End
@@ -388,10 +396,10 @@ func (rt *Runtime) checkSrc(src, file string) types.CheckResult {
 	return res
 }
 
-// Check type-checks src with a fresh runtime. print is registered so
+// Check type-checks r with a fresh runtime. print is registered so
 // scripts that use it type-check the same way as `writ check`.
-func Check(src string) types.CheckResult {
+func Check(r io.Reader) types.CheckResult {
 	rt := New()
 	rt.RegisterPrint()
-	return rt.Check(src)
+	return rt.Check(r)
 }

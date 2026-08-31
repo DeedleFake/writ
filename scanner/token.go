@@ -1,5 +1,12 @@
 package scanner
 
+import (
+	"bufio"
+	"errors"
+	"io"
+	"strings"
+)
+
 // TokenKind classifies a source token.
 type TokenKind int
 
@@ -64,7 +71,7 @@ func (k TokenKind) String() string {
 	}
 }
 
-// Token is a source token. Text is the exact source slice.
+// Token is a source token. Text is the exact source bytes.
 type Token struct {
 	Kind  TokenKind
 	Text  string
@@ -154,143 +161,288 @@ func IsSlot(word string) bool {
 	return true
 }
 
-func scanQuoted(src string, i int, quote byte) (end int) {
-	j := i + 1
-	n := len(src)
-	for j < n {
-		ch := src[j]
-		if ch == '\\' && j+1 < n {
-			j += 2
-			continue
+// Scanner reads tokens from a source stream.
+type Scanner struct {
+	br        *bufio.Reader
+	off       int
+	highlight bool
+	hasPeek   bool
+	peekTok   Token
+	peekErr   error
+	done      bool
+	ioErr     error
+}
+
+// New returns a scanner over r. Highlighting is off (parser kinds).
+func New(r io.Reader) *Scanner {
+	return &Scanner{br: bufio.NewReader(r)}
+}
+
+// SetHighlight remaps token kinds for editors. Spans, Text, and token
+// count are unchanged.
+func (s *Scanner) SetHighlight(on bool) {
+	s.highlight = on
+}
+
+// Next returns the next token. At end of input it returns TokEOF.
+// Other errors are from the reader. After TokEOF, later Next calls
+// may return TokEOF again.
+func (s *Scanner) Next() (Token, error) {
+	t, err := s.nextRaw()
+	if err != nil {
+		return Token{}, err
+	}
+	return s.out(t), nil
+}
+
+// Peek returns the next token without consuming it.
+func (s *Scanner) Peek() (Token, error) {
+	if !s.hasPeek {
+		s.peekTok, s.peekErr = s.readToken()
+		s.hasPeek = true
+	}
+	if s.peekErr != nil {
+		return Token{}, s.peekErr
+	}
+	return s.out(s.peekTok), nil
+}
+
+func (s *Scanner) nextRaw() (Token, error) {
+	if s.hasPeek {
+		s.hasPeek = false
+		t, err := s.peekTok, s.peekErr
+		s.peekTok = Token{}
+		s.peekErr = nil
+		return t, err
+	}
+	return s.readToken()
+}
+
+func (s *Scanner) out(t Token) Token {
+	if s.highlight {
+		return highlightKind(t)
+	}
+	return t
+}
+
+func highlightKind(t Token) Token {
+	switch t.Kind {
+	case TokLParen, TokRParen, TokLBracket, TokRBracket:
+		t.Kind = TokParen
+	case TokQuote, TokUnquote, TokSplice:
+		t.Kind = TokKeyword
+	case TokTick:
+		t.Kind = TokSymbol
+	case TokSymbol:
+		word := t.Text
+		switch {
+		case IsSlot(word):
+			t.Kind = TokKeyword
+		case len(word) > 1 && word[len(word)-1] == ':':
+			t.Kind = TokKeyword
+		case IsKeyword(word):
+			t.Kind = TokKeyword
+		case IsBuiltin(word):
+			t.Kind = TokBuiltin
+		default:
+			t.Kind = TokSymbol
 		}
-		j++
-		if ch == quote {
+	}
+	return t
+}
+
+func (s *Scanner) readByte() (byte, error) {
+	if s.ioErr != nil {
+		return 0, s.ioErr
+	}
+	b, err := s.br.ReadByte()
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			s.ioErr = err
+		}
+		return 0, err
+	}
+	s.off++
+	return b, nil
+}
+
+func (s *Scanner) peekByte() (byte, error) {
+	if s.ioErr != nil {
+		return 0, s.ioErr
+	}
+	buf, err := s.br.Peek(1)
+	if err != nil {
+		if !errors.Is(err, io.EOF) {
+			s.ioErr = err
+		}
+		return 0, err
+	}
+	return buf[0], nil
+}
+
+func (s *Scanner) eofTok() Token {
+	return Token{Kind: TokEOF, Start: s.off, End: s.off}
+}
+
+func (s *Scanner) tok(kind TokenKind, start int, text string) Token {
+	return Token{Kind: kind, Text: text, Start: start, End: s.off}
+}
+
+func (s *Scanner) readToken() (Token, error) {
+	if s.ioErr != nil {
+		return Token{}, s.ioErr
+	}
+	if s.done {
+		return s.eofTok(), nil
+	}
+	start := s.off
+	c, err := s.readByte()
+	if errors.Is(err, io.EOF) {
+		s.done = true
+		return s.eofTok(), nil
+	}
+	if err != nil {
+		return Token{}, err
+	}
+	if isWS(c) {
+		return s.scanRun(TokWS, start, c, isWS)
+	}
+	if c == ';' {
+		return s.scanComment(start, c)
+	}
+	switch c {
+	case '(':
+		return s.tok(TokLParen, start, "("), nil
+	case ')':
+		return s.tok(TokRParen, start, ")"), nil
+	case '[':
+		return s.tok(TokLBracket, start, "["), nil
+	case ']':
+		return s.tok(TokRBracket, start, "]"), nil
+	case '\'':
+		return s.tok(TokQuote, start, "'"), nil
+	case ',':
+		return s.tok(TokUnquote, start, ","), nil
+	case '@':
+		return s.tok(TokSplice, start, "@"), nil
+	case '`':
+		text, err := s.scanQuoted(c, '`')
+		if err != nil {
+			return Token{}, err
+		}
+		return s.tok(TokTick, start, text), nil
+	case '"':
+		text, err := s.scanQuoted(c, '"')
+		if err != nil {
+			return Token{}, err
+		}
+		return s.tok(TokString, start, text), nil
+	}
+	text, err := s.scanAtom(c)
+	if err != nil {
+		return Token{}, err
+	}
+	kind := TokSymbol
+	if IsNumLit(text) {
+		kind = TokNumber
+	}
+	return s.tok(kind, start, text), nil
+}
+
+func (s *Scanner) scanRun(kind TokenKind, start int, first byte, keep func(byte) bool) (Token, error) {
+	var b strings.Builder
+	b.WriteByte(first)
+	for {
+		p, err := s.peekByte()
+		if errors.Is(err, io.EOF) {
 			break
 		}
+		if err != nil {
+			return Token{}, err
+		}
+		if !keep(p) {
+			break
+		}
+		c, err := s.readByte()
+		if err != nil {
+			return Token{}, err
+		}
+		b.WriteByte(c)
 	}
-	return j
+	return s.tok(kind, start, b.String()), nil
 }
 
-// Scan splits src into tokens with positions. It does not fail on
-// unterminated strings or ticks; the parser reports those.
-func Scan(src string) []Token {
-	out := make([]Token, 0, 16)
-	i := 0
-	n := len(src)
-	push := func(kind TokenKind, start, end int) {
-		out = append(out, Token{Kind: kind, Text: src[start:end], Start: start, End: end})
+func (s *Scanner) scanComment(start int, first byte) (Token, error) {
+	var b strings.Builder
+	b.WriteByte(first)
+	for {
+		p, err := s.peekByte()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return Token{}, err
+		}
+		if p == '\n' {
+			break
+		}
+		c, err := s.readByte()
+		if err != nil {
+			return Token{}, err
+		}
+		b.WriteByte(c)
 	}
-	for i < n {
-		c := src[i]
-		if isWS(c) {
-			j := i + 1
-			for j < n && isWS(src[j]) {
-				j++
-			}
-			push(TokWS, i, j)
-			i = j
-			continue
-		}
-		if c == ';' {
-			j := i + 1
-			for j < n && src[j] != '\n' {
-				j++
-			}
-			push(TokComment, i, j)
-			i = j
-			continue
-		}
-		if c == '(' {
-			push(TokLParen, i, i+1)
-			i++
-			continue
-		}
-		if c == ')' {
-			push(TokRParen, i, i+1)
-			i++
-			continue
-		}
-		if c == '[' {
-			push(TokLBracket, i, i+1)
-			i++
-			continue
-		}
-		if c == ']' {
-			push(TokRBracket, i, i+1)
-			i++
-			continue
-		}
-		if c == '\'' {
-			push(TokQuote, i, i+1)
-			i++
-			continue
-		}
-		if c == ',' {
-			push(TokUnquote, i, i+1)
-			i++
-			continue
-		}
-		if c == '@' {
-			push(TokSplice, i, i+1)
-			i++
-			continue
-		}
-		if c == '`' {
-			j := scanQuoted(src, i, '`')
-			push(TokTick, i, j)
-			i = j
-			continue
-		}
-		if c == '"' {
-			j := scanQuoted(src, i, '"')
-			push(TokString, i, j)
-			i = j
-			continue
-		}
-		j := i + 1
-		for j < n && !isAtomStop(src[j]) {
-			j++
-		}
-		word := src[i:j]
-		if IsNumLit(word) {
-			push(TokNumber, i, j)
-		} else {
-			push(TokSymbol, i, j)
-		}
-		i = j
-	}
-	return out
+	return s.tok(TokComment, start, b.String()), nil
 }
 
-// Tokenize splits src into highlighting tokens.
-func Tokenize(src string) []Token {
-	raw := Scan(src)
-	out := make([]Token, 0, len(raw))
-	for _, t := range raw {
-		kind := t.Kind
-		switch t.Kind {
-		case TokLParen, TokRParen, TokLBracket, TokRBracket:
-			kind = TokParen
-		case TokQuote, TokUnquote, TokSplice:
-			kind = TokKeyword
-		case TokTick:
-			kind = TokSymbol
-		case TokSymbol:
-			word := t.Text
-			switch {
-			case IsSlot(word):
-				kind = TokKeyword
-			case len(word) > 1 && word[len(word)-1] == ':':
-				kind = TokKeyword
-			case IsKeyword(word):
-				kind = TokKeyword
-			case IsBuiltin(word):
-				kind = TokBuiltin
-			default:
-				kind = TokSymbol
-			}
+func (s *Scanner) scanQuoted(first, quote byte) (string, error) {
+	var b strings.Builder
+	b.WriteByte(first)
+	for {
+		c, err := s.readByte()
+		if errors.Is(err, io.EOF) {
+			return b.String(), nil
 		}
-		out = append(out, Token{Kind: kind, Text: t.Text, Start: t.Start, End: t.End})
+		if err != nil {
+			return "", err
+		}
+		b.WriteByte(c)
+		if c == '\\' {
+			n, err := s.readByte()
+			if errors.Is(err, io.EOF) {
+				return b.String(), nil
+			}
+			if err != nil {
+				return "", err
+			}
+			b.WriteByte(n)
+			continue
+		}
+		if c == quote {
+			return b.String(), nil
+		}
 	}
-	return out
+}
+
+func (s *Scanner) scanAtom(first byte) (string, error) {
+	var b strings.Builder
+	b.WriteByte(first)
+	for {
+		p, err := s.peekByte()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+		if isAtomStop(p) {
+			break
+		}
+		c, err := s.readByte()
+		if err != nil {
+			return "", err
+		}
+		b.WriteByte(c)
+	}
+	return b.String(), nil
 }

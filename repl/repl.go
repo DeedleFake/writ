@@ -96,7 +96,7 @@ func (r REPL) Run(ctx context.Context) error {
 		}
 		buf.WriteString(line)
 		src := buf.String()
-		forms, err := parser.Parse(src)
+		forms, err := parser.Parse(strings.NewReader(src))
 		if err != nil {
 			if parser.Incomplete(err) {
 				cont = true
@@ -112,7 +112,7 @@ func (r REPL) Run(ctx context.Context) error {
 		if skipResult(forms) {
 			continue
 		}
-		v, err := rt.Eval(src)
+		v, err := rt.Eval(strings.NewReader(src))
 		if err != nil {
 			fmt.Fprintln(errW, err)
 			continue

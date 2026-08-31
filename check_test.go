@@ -3,6 +3,7 @@ package writ
 import (
 	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/types"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,15 +12,15 @@ import (
 )
 
 func TestCheckIntFloat(t *testing.T) {
-	res := Check("(+ 1 2)")
+	res := Check(rd("(+ 1 2)"))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("diags: %v", res.Diagnostics)
 	}
-	res = Check(`(+ 1 "x")`)
+	res = Check(rd(`(+ 1 "x")`))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("expected error for + string")
 	}
-	res = Check("(+ 1 2.5)")
+	res = Check(rd("(+ 1 2.5)"))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("mix number diags: %v", res.Diagnostics)
 	}
@@ -30,7 +31,7 @@ func TestCheckDynamicVsStatic(t *testing.T) {
 (prop-set 'hits 0)
 (+ (prop-get 'hits) 1)
 `
-	res := Check(ok)
+	res := Check(rd(ok))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("prop-set two-pass: %v", res.Diagnostics)
 	}
@@ -44,7 +45,7 @@ func TestCheckDynamicVsStatic(t *testing.T) {
 		t.Fatalf("expected dynamic int hint, got %#v", res.Hints)
 	}
 	bad := `(+ (prop-get 'hits) 1)`
-	res = Check(bad)
+	res = Check(rd(bad))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("prop-get with no writes should be nil, not a number")
 	}
@@ -56,15 +57,15 @@ func TestCheckClauseArrows(t *testing.T) {
 (def (f n) (+ n 1))
 (f 2)
 `
-	res := Check(src)
+	res := Check(rd(src))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("clauses: %v", res.Diagnostics)
 	}
-	res = Check(`
+	res = Check(rd(`
 (def (f 0) 1)
 (def (f n) (+ n 1))
 (f "no")
-`)
+`))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("expected no matching clause")
 	}
@@ -77,14 +78,14 @@ func TestCheckIfNarrow(t *testing.T) {
     (+ x 1)
     0))
 `
-	res := Check(src)
+	res := Check(rd(src))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("narrow: %v", res.Diagnostics)
 	}
 }
 
 func TestCheckUnknownName(t *testing.T) {
-	res := Check("(+ nope 1)")
+	res := Check(rd("(+ nope 1)"))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("unknown name")
 	}
@@ -92,24 +93,24 @@ func TestCheckUnknownName(t *testing.T) {
 
 func TestCheckDoesNotSeeEvalBindings(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval("(def (inc n) (+ n 1))"); err != nil {
+	if _, err := rt.Eval(rd("(def (inc n) (+ n 1))")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`); err != nil {
+	if _, err := rt.Eval(rd(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`)); err != nil {
 		t.Fatal(err)
 	}
-	res := rt.Check("(inc 4)")
+	res := rt.Check(rd("(inc 4)"))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("Check should not see Eval defs")
 	}
-	res = rt.Check("(unless false 1)")
+	res = rt.Check(rd("(unless false 1)"))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("Check should not see Eval macros")
 	}
 }
 
 func TestCheckHints(t *testing.T) {
-	res := Check("(+ 1 2)")
+	res := Check(rd("(+ 1 2)"))
 	if len(res.Hints) == 0 {
 		t.Fatal("expected hints")
 	}
@@ -118,14 +119,14 @@ func TestCheckHints(t *testing.T) {
 func TestCheckHostEvent(t *testing.T) {
 	rt := New()
 	rt.RegisterEvent("tick", types.PayloadKey{Name: "n", Type: types.IntType()})
-	res := rt.Check(`
+	res := rt.Check(rd(`
 (on tick (n)
   (+ n 1))
-`)
+`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("on tick: %v", res.Diagnostics)
 	}
-	res = rt.Check(`(on boom () 1)`)
+	res = rt.Check(rd(`(on boom () 1)`))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("unknown event")
 	}
@@ -141,14 +142,14 @@ func TestCheckHostEvent(t *testing.T) {
 }
 
 func TestCheckNoEventsAnyName(t *testing.T) {
-	res := Check(`(on whatever () 1)`)
+	res := Check(rd(`(on whatever () 1)`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("any event: %v", res.Diagnostics)
 	}
 }
 
 func TestCheckDefNotTop(t *testing.T) {
-	res := Check(`(let [x: 1] (def (f) x))`)
+	res := Check(rd(`(let [x: 1] (def (f) x))`))
 	found := false
 	for _, d := range res.Diagnostics {
 		if strings.Contains(d.Message, "top") {
@@ -172,18 +173,18 @@ func TestCheckHostAlias(t *testing.T) {
 	}, types.PosArrow(types.NilType(), ct)); err != nil {
 		t.Fatal(err)
 	}
-	res := rt.Check(`(paint "red")`)
+	res := rt.Check(rd(`(paint "red")`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("paint red: %v", res.Diagnostics)
 	}
-	res = rt.Check(`(paint "green")`)
+	res = rt.Check(rd(`(paint "green")`))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("expected color error")
 	}
 }
 
 func TestCheckParseAndFile(t *testing.T) {
-	res := Check("(")
+	res := Check(rd("("))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("expected parse diagnostic")
 	}
@@ -197,31 +198,46 @@ func TestCheckParseAndFile(t *testing.T) {
 	}
 }
 
+func TestCheckEmptyAndIOError(t *testing.T) {
+	res := Check(rd(""))
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("empty: %v", res.Diagnostics)
+	}
+	res = Check(rd("  \n  "))
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("ws: %v", res.Diagnostics)
+	}
+	res = Check(errReader{err: errors.New("boom")})
+	if len(res.Diagnostics) == 0 || !strings.Contains(res.Diagnostics[0].Message, "boom") {
+		t.Fatalf("io: %v", res.Diagnostics)
+	}
+}
+
 func TestCheckArity(t *testing.T) {
-	if len(Check("(-)").Diagnostics) == 0 {
+	if len(Check(rd("(-)")).Diagnostics) == 0 {
 		t.Fatal("(-)")
 	}
-	if len(Check("(mod 1)").Diagnostics) == 0 {
+	if len(Check(rd("(mod 1)")).Diagnostics) == 0 {
 		t.Fatal("(mod 1)")
 	}
 }
 
 func TestCheckMapSymbolKeys(t *testing.T) {
-	res := Check(`(map-get [a: 1] 'a)`)
+	res := Check(rd(`(map-get [a: 1] 'a)`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("symbol key: %v", res.Diagnostics)
 	}
-	res = Check(`(map-get [a: 1] "a")`)
+	res = Check(rd(`(map-get [a: 1] "a")`))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("expected error for string map key")
 	}
 }
 
 func TestCheckKeywordParamName(t *testing.T) {
-	res := Check(`
+	res := Check(rd(`
 (def (greet name: n) name)
 (greet name: "ada")
-`)
+`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("name: n / name: %v", res.Diagnostics)
 	}
@@ -247,10 +263,10 @@ func TestCheckImportedArrows(t *testing.T) {
 }
 
 func TestCheckKeywordExtraArgs(t *testing.T) {
-	res := Check(`
+	res := Check(rd(`
 (def (f a:) 1)
 (f a: 1 b: 2)
-`)
+`))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("expected extra keyword diagnostic")
 	}
@@ -289,12 +305,12 @@ func TestCheckFileImportUsesScriptDir(t *testing.T) {
 func TestCheckDoesNotScheduleAfter(t *testing.T) {
 	n := 0
 	rt := New(WithScheduler(func(_ time.Duration, fn func()) { n++ }))
-	_ = rt.Check(`
+	_ = rt.Check(rd(`
 (defm (p)
   (after 0 1)
   1)
 (p)
-`)
+`))
 	if n != 0 {
 		t.Fatalf("Check scheduled after %d times", n)
 	}
@@ -316,22 +332,22 @@ func TestCheckSurfacesImportedErrors(t *testing.T) {
 }
 
 func TestCheckPrintAligned(t *testing.T) {
-	res := Check(`(print "hi")`)
+	res := Check(rd(`(print "hi")`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("print: %v", res.Diagnostics)
 	}
 }
 
 func TestCheckDottedAccess(t *testing.T) {
-	res := Check(`(let [io: [write: (fn (x) x)]] (io.write 1))`)
+	res := Check(rd(`(let [io: [write: (fn (x) x)]] (io.write 1))`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("call: %v", res.Diagnostics)
 	}
-	res = Check(`(let [a: [b: [c: 3]]] a.b.c)`)
+	res = Check(rd(`(let [a: [b: [c: 3]]] a.b.c)`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("nested: %v", res.Diagnostics)
 	}
-	res = Check(`(let [m: [a: 1]] m.b)`)
+	res = Check(rd(`(let [m: [a: 1]] m.b)`))
 	found := false
 	for _, d := range res.Diagnostics {
 		if strings.Contains(d.Message, "unknown field") {
@@ -341,7 +357,7 @@ func TestCheckDottedAccess(t *testing.T) {
 	if !found {
 		t.Fatalf("missing field: %v", res.Diagnostics)
 	}
-	res = Check(`(let [x: 1] x.a)`)
+	res = Check(rd(`(let [x: 1] x.a)`))
 	found = false
 	for _, d := range res.Diagnostics {
 		if strings.Contains(d.Message, "map") {
@@ -351,15 +367,15 @@ func TestCheckDottedAccess(t *testing.T) {
 	if !found {
 		t.Fatalf("non-map: %v", res.Diagnostics)
 	}
-	res = Check(`(fn (m) (if (map? m) m.x else 0))`)
+	res = Check(rd(`(fn (m) (if (map? m) m.x else 0))`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("map? then .: %v", res.Diagnostics)
 	}
-	res = Check(`(let [m: (if true [a: 1] else [b: 2])] m.a)`)
+	res = Check(rd(`(let [m: (if true [a: 1] else [b: 2])] m.a)`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("union m.a: %v", res.Diagnostics)
 	}
-	res = Check(`(let [m: (if true [a: [c: 1]] else [a: [d: 2]])] m.a.c)`)
+	res = Check(rd(`(let [m: (if true [a: [c: 1]] else [a: [d: 2]])] m.a.c)`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("union nested: %v", res.Diagnostics)
 	}
@@ -409,7 +425,7 @@ func TestCheckKeyedImport(t *testing.T) {
 			},
 		},
 	})
-	res = rt.Check(`(import io: "io") (io.write "x")`)
+	res = rt.Check(rd(`(import io: "io") (io.write "x")`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("host io.write: %v", res.Diagnostics)
 	}
@@ -460,25 +476,25 @@ func TestCheckImportedMacros(t *testing.T) {
 }
 
 func TestCheckDefmFragments(t *testing.T) {
-	res := Check(`
+	res := Check(rd(`
 (defm (example @rest)
   '(prop-set 'hit true)
   @rest)
 (def (f)
   (example (prop-set 'n 7))
   (prop-get 'n))
-`)
+`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("defm fragments: %v", res.Diagnostics)
 	}
 }
 
 func TestCheckModInt(t *testing.T) {
-	res := Check("(mod 3 2)")
+	res := Check(rd("(mod 3 2)"))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("%v", res.Diagnostics)
 	}
-	res = Check("(mod 3 2.0)")
+	res = Check(rd("(mod 3 2.0)"))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("mod float")
 	}
@@ -515,24 +531,24 @@ func TestCheckNativeHostArrow(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	res := rt.Check("(use-box (mk-box))")
+	res := rt.Check(rd("(use-box (mk-box))"))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("accept matching native: %v", res.Diagnostics)
 	}
-	res = rt.Check("(use-box 1)")
+	res = rt.Check(rd("(use-box 1)"))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("expected native type error")
 	}
-	res = rt.Check("(use-box (mk-other))")
+	res = rt.Check(rd("(use-box (mk-other))"))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("expected Native[A] vs Native[B] error")
 	}
-	res = rt.Check(`(let [x: (mk-box)] (use-box x))`)
+	res = rt.Check(rd(`(let [x: (mk-box)] (use-box x))`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("var from host return: %v", res.Diagnostics)
 	}
 
-	v, err := rt.Eval("(use-box (mk-box))")
+	v, err := rt.Eval(rd("(use-box (mk-box))"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +556,7 @@ func TestCheckNativeHostArrow(t *testing.T) {
 		t.Fatalf("round-trip: %v", v)
 	}
 
-	echoed, err := rt.Eval("(echo-box (mk-box))")
+	echoed, err := rt.Eval(rd("(echo-box (mk-box))"))
 	if err != nil {
 		t.Fatal(err)
 	}

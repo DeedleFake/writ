@@ -1,15 +1,21 @@
 package parser
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
 	"deedles.dev/writ/runtime"
 )
 
+func parseSrc(src string) ([]runtime.Value, error) {
+	return Parse(strings.NewReader(src))
+}
+
 func parse1(t *testing.T, src string) runtime.Value {
 	t.Helper()
-	forms, err := Parse(src)
+	forms, err := parseSrc(src)
 	if err != nil {
 		t.Fatalf("parse %q: %v", src, err)
 	}
@@ -58,7 +64,7 @@ func TestParseListAndMap(t *testing.T) {
 }
 
 func TestParseMapMixError(t *testing.T) {
-	_, err := Parse("[a k: 1]")
+	_, err := parseSrc("[a k: 1]")
 	if err == nil || !strings.Contains(err.Error(), "mix") {
 		t.Fatalf("expected mix error, got %v", err)
 	}
@@ -84,7 +90,7 @@ func TestParseQuoteUnquoteSplice(t *testing.T) {
 }
 
 func TestParseKeywordsAndComments(t *testing.T) {
-	forms, err := Parse("; head\n(f k: 1) ; trail\n")
+	forms, err := parseSrc("; head\n(f k: 1) ; trail\n")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,12 +175,12 @@ func TestParseDottedErrors(t *testing.T) {
 		{"foo.1", "name"},
 	}
 	for _, c := range cases {
-		_, err := Parse(c.src)
+		_, err := parseSrc(c.src)
 		if err == nil || !strings.Contains(err.Error(), c.sub) {
 			t.Errorf("%q: got %v want %s", c.src, err, c.sub)
 		}
 	}
-	if _, err := Parse("(. x y)"); err != nil {
+	if _, err := parseSrc("(. x y)"); err != nil {
 		t.Fatalf("(. x y): %v", err)
 	}
 }
@@ -203,7 +209,7 @@ func TestParseErrors(t *testing.T) {
 		{"[k:]", "map key needs a value"},
 	}
 	for _, c := range cases {
-		_, err := Parse(c.src)
+		_, err := parseSrc(c.src)
 		if err == nil || !strings.Contains(err.Error(), c.sub) {
 			t.Errorf("%q: got %v want %s", c.src, err, c.sub)
 		}
@@ -221,13 +227,13 @@ func TestIncomplete(t *testing.T) {
 		t.Fatal("message text is not enough")
 	}
 	for _, src := range []string{"(", "[", `"abc`, "`abc", "'", ",", "@", "(+ 1", "[k:", `'(`} {
-		_, err := Parse(src)
+		_, err := parseSrc(src)
 		if !Incomplete(err) {
 			t.Errorf("%q: want incomplete, got %v", src, err)
 		}
 	}
 	for _, src := range []string{")", "]", "(+ 1 2)", "[k:]", "[a k: 1]", "", "; comment"} {
-		_, err := Parse(src)
+		_, err := parseSrc(src)
 		if Incomplete(err) {
 			t.Errorf("%q: unexpected incomplete %v", src, err)
 		}
@@ -244,7 +250,7 @@ func TestParseTrueFalseNil(t *testing.T) {
 }
 
 func TestParseInternsSymbols(t *testing.T) {
-	forms, err := Parse("'hits 'hits")
+	forms, err := parseSrc("'hits 'hits")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,5 +266,22 @@ func TestParseInternsSymbols(t *testing.T) {
 	sb, okB := b.Span()
 	if !okA || !okB || sa == sb {
 		t.Fatalf("want distinct spans, got %+v %+v", sa, sb)
+	}
+}
+
+type failReader struct{ err error }
+
+func (f failReader) Read([]byte) (int, error) { return 0, f.err }
+
+func TestParseIOError(t *testing.T) {
+	boom := errors.New("boom")
+	_, err := Parse(failReader{err: boom})
+	if !errors.Is(err, boom) {
+		t.Fatalf("got %v", err)
+	}
+	r := io.MultiReader(strings.NewReader("(+ 1"), failReader{err: boom})
+	_, err = Parse(r)
+	if !errors.Is(err, boom) {
+		t.Fatalf("partial: %v", err)
 	}
 }

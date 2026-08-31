@@ -41,18 +41,19 @@ func (rt *Runtime) loadImport(spec, fromFile string) (runtime.Value, error) {
 		rt.m.RememberPackage(path, exp)
 		return exp, nil
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return runtime.Value{}, err
 	}
+	defer f.Close()
 	rt.m.PushLoading(path)
 	defer rt.m.PopLoading()
 	prev := rt.m.File()
 	rt.m.SetFile(path)
 	defer rt.m.SetFile(prev)
-	forms, err := parser.Parse(string(data))
+	forms, err := parser.Parse(f)
 	if err != nil {
-		return runtime.Value{}, runtime.AsError(err).WithFile(path)
+		return runtime.Value{}, parseErr(err, path)
 	}
 	return rt.m.EvalModule(path, forms)
 }
@@ -226,13 +227,14 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 		anyT := types.Any()
 		return types.Dynamic(types.MapType(nil, &anyT)), nil, nil
 	}
-	data, err := os.ReadFile(path)
+	f, err := os.Open(path)
 	if err != nil {
 		return types.Type{}, nil, err
 	}
+	defer f.Close()
 	prev := rt.m.File()
 	rt.m.SetFile(path)
-	res := rt.checkSrc(string(data), path)
+	res := rt.checkSrc(f, path)
 	rt.m.SetFile(prev)
 	diags := prefixImportDiags(path, res.Diagnostics)
 	for _, d := range res.Diagnostics {

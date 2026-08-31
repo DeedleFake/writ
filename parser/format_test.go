@@ -1,10 +1,19 @@
 package parser
 
 import (
+	"bytes"
+	"errors"
+	"strings"
 	"testing"
 
 	"deedles.dev/writ/runtime"
 )
+
+func formatSrc(src string) (string, error) {
+	var buf bytes.Buffer
+	err := Format(strings.NewReader(src), &buf)
+	return buf.String(), err
+}
 
 func stripComments(v runtime.Value) runtime.Value {
 	switch v.Kind() {
@@ -90,6 +99,7 @@ func TestFormatRoundTrip(t *testing.T) {
 		"(let [x: 1]\n  x)\n",
 		"(on ev (k:)\n  k)\n",
 		"1.0\n",
+		"1.00\n",
 		"-3.5\n",
 		"\"a\\nb\"\n",
 		"`foo bar`\n",
@@ -99,15 +109,15 @@ func TestFormatRoundTrip(t *testing.T) {
 		"(if x\n  1\nelse if y\n  2\nelse\n  3)\n",
 	}
 	for _, src := range srcs {
-		out, err := Format(src)
+		out, err := formatSrc(src)
 		if err != nil {
 			t.Fatalf("format %q: %v", src, err)
 		}
-		a, err := Parse(src)
+		a, err := parseSrc(src)
 		if err != nil {
 			t.Fatal(err)
 		}
-		b, err := Parse(out)
+		b, err := parseSrc(out)
 		if err != nil {
 			t.Fatalf("reparse %q -> %q: %v", src, out, err)
 		}
@@ -123,34 +133,75 @@ func TestFormatRoundTrip(t *testing.T) {
 }
 
 func TestFormatEmpty(t *testing.T) {
-	out, err := Format("")
+	out, err := formatSrc("")
 	if err != nil || out != "" {
 		t.Fatalf("%q %v", out, err)
+	}
+	out, err = formatSrc("  \n  ")
+	if err != nil || out != "" {
+		t.Fatalf("ws %q %v", out, err)
 	}
 }
 
 func TestFormatParseError(t *testing.T) {
-	if _, err := Format("("); err == nil {
+	if _, err := formatSrc("("); err == nil {
 		t.Fatal("expected error")
 	}
 }
 
+type failWriter struct{ err error }
+
+func (f failWriter) Write([]byte) (int, error) { return 0, f.err }
+
+func TestFormatWriteError(t *testing.T) {
+	boom := errors.New("boom")
+	if err := Format(strings.NewReader(""), failWriter{err: boom}); err != nil {
+		t.Fatalf("empty write: %v", err)
+	}
+	if err := Format(strings.NewReader("(+ 1 2)"), failWriter{err: boom}); !errors.Is(err, boom) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestFormatAtomLexeme(t *testing.T) {
+	for _, src := range []string{"1.00\n", "+1\n", "`foo bar`\n", "`io.write`\n"} {
+		out, err := formatSrc(src)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if out != src {
+			t.Fatalf("got %q want %q", out, src)
+		}
+	}
+}
+
+func TestFormatBroke(t *testing.T) {
+	src := "(def (f n)\n  (+ n 1))\n"
+	out, err := formatSrc(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out != src {
+		t.Fatalf("got %q want %q", out, src)
+	}
+}
+
 func TestFormatDottedAccess(t *testing.T) {
-	out, err := Format("(. io write)\n")
+	out, err := formatSrc("(. io write)\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out != "io.write\n" {
 		t.Fatalf("got %q", out)
 	}
-	out, err = Format("(. (. io fs) write)\n")
+	out, err = formatSrc("(. (. io fs) write)\n")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out != "io.fs.write\n" {
 		t.Fatalf("nested got %q", out)
 	}
-	out, err = Format("(. (f) write)\n")
+	out, err = formatSrc("(. (f) write)\n")
 	if err != nil {
 		t.Fatal(err)
 	}

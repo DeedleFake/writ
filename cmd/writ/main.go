@@ -209,22 +209,18 @@ func cmdFmt(args []string) error {
 		return fmt.Errorf("usage: writ fmt [-w] FILE.writ; run 'writ help fmt' for usage")
 	}
 	file := fs.Arg(0)
-	data, err := os.ReadFile(file)
+	f, err := os.Open(file)
 	if err != nil {
 		return err
 	}
-	text, err := parser.Format(string(data))
-	if err != nil {
-		return err
-	}
+	defer f.Close()
 	if *write {
-		return writeFileAtomic(file, text)
+		return writeFileAtomic(file, f)
 	}
-	_, err = os.Stdout.WriteString(text)
-	return err
+	return parser.Format(f, os.Stdout)
 }
 
-func writeFileAtomic(path, text string) error {
+func writeFileAtomic(path string, src io.Reader) error {
 	st, err := os.Lstat(path)
 	if err != nil {
 		return err
@@ -244,7 +240,7 @@ func writeFileAtomic(path, text string) error {
 			_ = os.Remove(tmpName)
 		}
 	}()
-	if _, err := io.WriteString(tmp, text); err != nil {
+	if err := parser.Format(src, tmp); err != nil {
 		_ = tmp.Close()
 		return err
 	}

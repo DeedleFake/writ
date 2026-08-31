@@ -2,6 +2,7 @@ package parser
 
 import (
 	"encoding/json"
+	"io"
 	"strings"
 
 	"deedles.dev/writ/runtime"
@@ -9,9 +10,7 @@ import (
 
 const maxInline = 72
 
-type printer struct {
-	src string
-}
+type printer struct{}
 
 var bodySpecials = map[string]struct{}{
 	"on": {}, "def": {}, "fn": {}, "let": {}, "if": {},
@@ -19,16 +18,17 @@ var bodySpecials = map[string]struct{}{
 	".": {},
 }
 
-// Format pretty-prints src. A trailing newline is added when src is not empty.
-func Format(src string) (string, error) {
-	forms, err := Parse(src)
+// Format pretty-prints r to w. A trailing newline is written when input
+// is not empty.
+func Format(r io.Reader, w io.Writer) error {
+	forms, err := Parse(r)
 	if err != nil {
-		return "", err
+		return err
 	}
 	if len(forms) == 0 {
-		return "", nil
+		return nil
 	}
-	p := &printer{src: src}
+	p := &printer{}
 	var text strings.Builder
 	text.WriteString(p.formatVal(forms[0], 0))
 	for i := 1; i < len(forms); i++ {
@@ -42,21 +42,8 @@ func Format(src string) (string, error) {
 		}
 		text.WriteString(sep + p.formatVal(form, 0))
 	}
-	return text.String() + "\n", nil
-}
-
-func (p *printer) originalAtom(v runtime.Value) string {
-	if p.src == "" {
-		return ""
-	}
-	sp, ok := v.Span()
-	if !ok {
-		return ""
-	}
-	if sp.Start < 0 || sp.End > len(p.src) || sp.End <= sp.Start {
-		return ""
-	}
-	return p.src[sp.Start:sp.End]
+	_, err = io.WriteString(w, text.String()+"\n")
+	return err
 }
 
 func fnIsMulti(v runtime.Value) bool {
@@ -551,12 +538,12 @@ func (p *printer) formatCore(v runtime.Value) string {
 func (p *printer) formatAtomCore(v runtime.Value) string {
 	switch v.Kind() {
 	case runtime.KindInt:
-		if s := p.originalAtom(v); s != "" {
+		if s := v.Lexeme(); s != "" {
 			return s
 		}
 		return v.String()
 	case runtime.KindFloat:
-		if s := p.originalAtom(v); s != "" {
+		if s := v.Lexeme(); s != "" {
 			return s
 		}
 		return v.String()
@@ -564,7 +551,7 @@ func (p *printer) formatAtomCore(v runtime.Value) string {
 		b, _ := json.Marshal(v.Text())
 		return string(b)
 	case runtime.KindSymbol:
-		if s := p.originalAtom(v); s != "" {
+		if s := v.Lexeme(); s != "" {
 			return s
 		}
 		if v.IsTrue() || v.IsFalse() || v.IsNil() {

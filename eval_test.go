@@ -2,6 +2,7 @@ package writ
 
 import (
 	"deedles.dev/writ/runtime"
+	"errors"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -10,10 +11,16 @@ import (
 	"time"
 )
 
+type errReader struct{ err error }
+
+func (e errReader) Read([]byte) (int, error) { return 0, e.err }
+
+func rd(s string) *strings.Reader { return strings.NewReader(s) }
+
 func evals(t *testing.T, src string) runtime.Value {
 	t.Helper()
 	rt := New()
-	v, err := rt.Eval(src)
+	v, err := rt.Eval(rd(src))
 	if err != nil {
 		t.Fatalf("eval %s: %v", src, err)
 	}
@@ -22,11 +29,31 @@ func evals(t *testing.T, src string) runtime.Value {
 
 func evalErr(t *testing.T, src string) error {
 	t.Helper()
-	_, err := New().Eval(src)
+	_, err := New().Eval(rd(src))
 	if err == nil {
 		t.Fatalf("expected error for %s", src)
 	}
 	return err
+}
+
+func TestEvalIOError(t *testing.T) {
+	boom := errors.New("boom")
+	_, err := New().Eval(errReader{err: boom})
+	if !errors.Is(err, boom) {
+		t.Fatalf("got %v", err)
+	}
+}
+
+func TestEvalEmpty(t *testing.T) {
+	for _, src := range []string{"", "  \n  "} {
+		v, err := New().Eval(rd(src))
+		if err != nil {
+			t.Fatalf("%q: %v", src, err)
+		}
+		if !v.IsNil() {
+			t.Fatalf("%q: got %v want nil", src, v)
+		}
+	}
 }
 
 func TestEvalArithIntFloat(t *testing.T) {
@@ -284,30 +311,30 @@ func TestEvalImportedMacros(t *testing.T) {
 	}
 
 	rt = New(WithSearchPath(dir))
-	v, err = rt.Eval(`
+	v, err = rt.Eval(rd(`
 (let [m: (import "macs.writ")]
   (m.unless false 41))
-`)
+`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !v.Equal(runtime.Int64(41)) {
 		t.Fatalf("let unless: %v", v)
 	}
-	v, err = rt.Eval(`
+	v, err = rt.Eval(rd(`
 (let [m: (import "macs.writ")]
   (m.unless true (no-such)))
-`)
+`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !v.IsNil() {
 		t.Fatalf("skip unused: %v", v)
 	}
-	v, err = rt.Eval(`
+	v, err = rt.Eval(rd(`
 (let [m: (import "macs.writ")]
   (m.from-here 2))
-`)
+`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -338,10 +365,10 @@ func TestEvalImportedMacros(t *testing.T) {
 	}
 
 	rt = New(WithSearchPath(dir))
-	_, err = rt.Eval(`
+	_, err = rt.Eval(rd(`
 (let [m: (import "macs.writ")]
   (list-map [false] (map-get m 'unless)))
-`)
+`))
 	if err == nil || !strings.Contains(err.Error(), "macro") {
 		t.Fatalf("macro as fn: %v", err)
 	}
@@ -358,7 +385,7 @@ func TestEvalMacroFragments(t *testing.T) {
   (prop-get 'n))
 (f)
 `
-	v, err := rt.Eval(src)
+	v, err := rt.Eval(rd(src))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,11 +465,11 @@ func TestEvalMacroFragments(t *testing.T) {
 	}
 
 	rt = New()
-	if _, err := rt.Eval(`
+	if _, err := rt.Eval(rd(`
 (defm (h)
   '(on ping () (prop-set 'n 1)))
 (h)
-`); err != nil {
+`)); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.Fire("ping", nil); err != nil {
@@ -478,33 +505,33 @@ func TestEvalLetBang(t *testing.T) {
 
 func TestEvalPersistsDefsAndMacros(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval("(def (inc n) (+ n 1))"); err != nil {
+	if _, err := rt.Eval(rd("(def (inc n) (+ n 1))")); err != nil {
 		t.Fatal(err)
 	}
-	v, err := rt.Eval("(inc 4)")
+	v, err := rt.Eval(rd("(inc 4)"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !v.Equal(runtime.Int64(5)) {
 		t.Fatalf("inc: %v", v)
 	}
-	if _, err := rt.Eval(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`); err != nil {
+	if _, err := rt.Eval(rd(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`)); err != nil {
 		t.Fatal(err)
 	}
-	v, err = rt.Eval("(unless false 42)")
+	v, err = rt.Eval(rd("(unless false 42)"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !v.Equal(runtime.Int64(42)) {
 		t.Fatalf("unless: %v", v)
 	}
-	if _, err := rt.Eval(`(defm (def-answer) '(def (answer) 42))`); err != nil {
+	if _, err := rt.Eval(rd(`(defm (def-answer) '(def (answer) 42))`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval("(def-answer)"); err != nil {
+	if _, err := rt.Eval(rd("(def-answer)")); err != nil {
 		t.Fatal(err)
 	}
-	v, err = rt.Eval("(answer)")
+	v, err = rt.Eval(rd("(answer)"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -515,18 +542,18 @@ func TestEvalPersistsDefsAndMacros(t *testing.T) {
 
 func TestEvalFnMacroClashAcrossCalls(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval("(def (f n) n)"); err != nil {
+	if _, err := rt.Eval(rd("(def (f n) n)")); err != nil {
 		t.Fatal(err)
 	}
-	_, err := rt.Eval("(defm (f n) n)")
+	_, err := rt.Eval(rd("(defm (f n) n)"))
 	if err == nil || !strings.Contains(err.Error(), "both") {
 		t.Fatalf("def then defm: %v", err)
 	}
 	rt2 := New()
-	if _, err := rt2.Eval("(defm (g n) n)"); err != nil {
+	if _, err := rt2.Eval(rd("(defm (g n) n)")); err != nil {
 		t.Fatal(err)
 	}
-	_, err = rt2.Eval("(def (g n) n)")
+	_, err = rt2.Eval(rd("(def (g n) n)"))
 	if err == nil || !strings.Contains(err.Error(), "both") {
 		t.Fatalf("defm then def: %v", err)
 	}
@@ -534,20 +561,20 @@ func TestEvalFnMacroClashAcrossCalls(t *testing.T) {
 
 func TestEvalResetAndOnAccumulate(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval("(def (inc n) (+ n 1))"); err != nil {
+	if _, err := rt.Eval(rd("(def (inc n) (+ n 1))")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`); err != nil {
+	if _, err := rt.Eval(rd(`(defm (unless test @body) (cons 'if (cons 'not (cons test body))))`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval(`(prop-set 'n 0)`); err != nil {
+	if _, err := rt.Eval(rd(`(prop-set 'n 0)`)); err != nil {
 		t.Fatal(err)
 	}
 	on := `(on ping () (prop-update 'n (fn + #1 1)))`
-	if _, err := rt.Eval(on); err != nil {
+	if _, err := rt.Eval(rd(on)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval(on); err != nil {
+	if _, err := rt.Eval(rd(on)); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.Fire("ping", nil); err != nil {
@@ -560,10 +587,10 @@ func TestEvalResetAndOnAccumulate(t *testing.T) {
 	if _, ok := rt.Lookup("inc"); ok {
 		t.Fatal("lookup after reset")
 	}
-	if _, err := rt.Eval("(inc 1)"); err == nil {
+	if _, err := rt.Eval(rd("(inc 1)")); err == nil {
 		t.Fatal("inc after reset")
 	}
-	if _, err := rt.Eval("(unless false 1)"); err == nil {
+	if _, err := rt.Eval(rd("(unless false 1)")); err == nil {
 		t.Fatal("unless after reset")
 	}
 	if !rt.GetProp("n").IsNil() {
@@ -575,10 +602,10 @@ func TestEvalResetAndOnAccumulate(t *testing.T) {
 	if !rt.GetProp("n").IsNil() {
 		t.Fatal("on after reset")
 	}
-	if _, err := rt.Eval(`(prop-set 'n 0)`); err != nil {
+	if _, err := rt.Eval(rd(`(prop-set 'n 0)`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval(on); err != nil {
+	if _, err := rt.Eval(rd(on)); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.Fire("ping", nil); err != nil {
@@ -591,23 +618,23 @@ func TestEvalResetAndOnAccumulate(t *testing.T) {
 
 func TestEvalProps(t *testing.T) {
 	rt := New()
-	if _, err := rt.Eval(`(prop-set 'hits 0)`); err != nil {
+	if _, err := rt.Eval(rd(`(prop-set 'hits 0)`)); err != nil {
 		t.Fatal(err)
 	}
-	v, err := rt.Eval(`(+ (prop-get 'hits) 2)`)
+	v, err := rt.Eval(rd(`(+ (prop-get 'hits) 2)`))
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("prop-get: %v", v)
 	}
-	if _, err := rt.Eval(`(prop-update 'hits (fn + #1 3))`); err != nil {
+	if _, err := rt.Eval(rd(`(prop-update 'hits (fn + #1 3))`)); err != nil {
 		t.Fatal(err)
 	}
 	if !rt.GetProp("hits").Equal(runtime.Int64(3)) {
 		t.Fatalf("prop-update store: %v", rt.GetProp("hits"))
 	}
-	if _, err := rt.Eval(`(prop-set ['a 'b] 1)`); err != nil {
+	if _, err := rt.Eval(rd(`(prop-set ['a 'b] 1)`)); err != nil {
 		t.Fatal(err)
 	}
 	if !rt.GetProp("a", "b").Equal(runtime.Int64(1)) {
@@ -799,13 +826,13 @@ func TestEvalKeyedImport(t *testing.T) {
 	}
 
 	rt := New(WithSearchPath(dir))
-	if _, err := rt.Eval("(def (f) 1)"); err != nil {
+	if _, err := rt.Eval(rd("(def (f) 1)")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := rt.Eval(`(import lib: "lib.writ")`); err != nil {
+	if _, err := rt.Eval(rd(`(import lib: "lib.writ")`)); err != nil {
 		t.Fatalf("session import after def: %v", err)
 	}
-	v, err = rt.Eval("(lib.double 4)")
+	v, err = rt.Eval(rd("(lib.double 4)"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -959,7 +986,7 @@ func TestAfterScheduler(t *testing.T) {
 		delays = append(delays, d)
 		pending = append(pending, fn)
 	}))
-	if _, err := rt.Eval(`(after 1 (prop-set 'done true))`); err != nil {
+	if _, err := rt.Eval(rd(`(after 1 (prop-set 'done true))`)); err != nil {
 		t.Fatal(err)
 	}
 	if len(delays) != 1 || delays[0] != time.Second {

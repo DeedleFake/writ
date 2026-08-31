@@ -2,6 +2,7 @@ package parser
 
 import (
 	"errors"
+	"io"
 	"strconv"
 	"strings"
 
@@ -10,17 +11,15 @@ import (
 )
 
 type parser struct {
-	src  string
-	toks []scanner.Token
-	i    int
+	sc   *scanner.Scanner
+	cur  scanner.Token
+	last scanner.Token
+	err  error
+	open []bool
 }
 
 func (p *parser) tok() scanner.Token {
-	if p.i >= len(p.toks) {
-		n := len(p.src)
-		return scanner.Token{Kind: scanner.TokEOF, Start: n, End: n}
-	}
-	return p.toks[p.i]
+	return p.cur
 }
 
 func (p *parser) pos() int {
@@ -28,19 +27,60 @@ func (p *parser) pos() int {
 }
 
 func (p *parser) endPos() int {
-	if p.i <= 0 {
-		return 0
-	}
-	return p.toks[p.i-1].End
+	return p.last.End
 }
 
-func (p *parser) advance() { p.i++ }
+func (p *parser) peek() {
+	if p.err != nil {
+		return
+	}
+	t, err := p.sc.Peek()
+	if err != nil {
+		p.err = err
+		return
+	}
+	p.cur = t
+}
 
-// Parse reads src into top-level forms. Comments are included.
-func Parse(src string) ([]runtime.Value, error) {
-	p := parser{src: src, toks: scanner.Scan(src)}
+func (p *parser) advance() {
+	if p.err != nil {
+		return
+	}
+	t, err := p.sc.Next()
+	if err != nil {
+		p.err = err
+		return
+	}
+	p.last = t
+	p.noteBroke(t.Text)
+	p.peek()
+}
+
+func (p *parser) noteBroke(text string) {
+	if len(p.open) == 0 || !strings.Contains(text, "\n") {
+		return
+	}
+	for i := range p.open {
+		p.open[i] = true
+	}
+}
+
+func withLex(v runtime.Value, t scanner.Token) runtime.Value {
+	return v.WithSpan(t.Start, t.End).WithLexeme(t.Text)
+}
+
+// Parse reads r into top-level forms. Comments are included.
+func Parse(r io.Reader) ([]runtime.Value, error) {
+	p := &parser{sc: scanner.New(r)}
+	p.peek()
+	if p.err != nil {
+		return nil, p.err
+	}
 	var forms []runtime.Value
 	nl := p.skipCount()
+	if p.err != nil {
+		return nil, p.err
+	}
 	for p.tok().Kind != scanner.TokEOF {
 		form, err := p.read()
 		if err != nil {
@@ -51,12 +91,15 @@ func Parse(src string) ([]runtime.Value, error) {
 		}
 		forms = append(forms, form)
 		nl = p.skipCount()
+		if p.err != nil {
+			return nil, p.err
+		}
 	}
 	return forms, nil
 }
 
-// Incomplete reports whether a [Parse] error means src needs more input
-// (unclosed list, map, string, tick symbol, or quote).
+// Incomplete reports whether a [Parse] error means the input needs more
+// data (unclosed list, map, string, tick symbol, or quote).
 func Incomplete(err error) bool {
 	var e *runtime.Error
 	return errors.As(err, &e) && e.IsIncomplete()
@@ -64,7 +107,7 @@ func Incomplete(err error) bool {
 
 func (p *parser) skipCount() int {
 	nl := 0
-	for p.tok().Kind == scanner.TokWS {
+	for p.err == nil && p.tok().Kind == scanner.TokWS {
 		nl += countNL(p.tok().Text)
 		p.advance()
 	}
@@ -88,12 +131,15 @@ func countNL(s string) int {
 }
 
 func (p *parser) skip() {
-	for p.tok().Kind == scanner.TokWS {
+	for p.err == nil && p.tok().Kind == scanner.TokWS {
 		p.advance()
 	}
 }
 
 func (p *parser) skipH() {
+	if p.err != nil {
+		return
+	}
 	t := p.tok()
 	if t.Kind != scanner.TokWS {
 		return
@@ -109,6 +155,9 @@ func (p *parser) attachTrail(v runtime.Value) runtime.Value {
 		return v
 	}
 	p.skipH()
+	if p.err != nil {
+		return v
+	}
 	t := p.tok()
 	if t.Kind != scanner.TokComment {
 		return v
@@ -117,8 +166,19 @@ func (p *parser) attachTrail(v runtime.Value) runtime.Value {
 	return v.WithComment(t.Text)
 }
 
+func (p *parser) trail(v runtime.Value) (runtime.Value, error) {
+	v = p.attachTrail(v)
+	if p.err != nil {
+		return runtime.Value{}, p.err
+	}
+	return v, nil
+}
+
 func (p *parser) read() (runtime.Value, error) {
 	p.skip()
+	if p.err != nil {
+		return runtime.Value{}, p.err
+	}
 	t := p.tok()
 	if t.Kind == scanner.TokEOF {
 		start := max(p.endPos()-1, 0)
@@ -127,6 +187,9 @@ func (p *parser) read() (runtime.Value, error) {
 	switch t.Kind {
 	case scanner.TokComment:
 		p.advance()
+		if p.err != nil {
+			return runtime.Value{}, p.err
+		}
 		return runtime.Comment(t.Text).WithSpan(t.Start, t.End), nil
 	case scanner.TokLParen:
 		return p.readDelimited(scanner.TokRParen, ')')
@@ -140,6 +203,9 @@ func (p *parser) read() (runtime.Value, error) {
 		return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "unexpected ]")
 	case scanner.TokQuote, scanner.TokUnquote, scanner.TokSplice:
 		p.advance()
+		if p.err != nil {
+			return runtime.Value{}, p.err
+		}
 		inner, err := p.read()
 		if err != nil {
 			return runtime.Value{}, err
@@ -157,38 +223,50 @@ func (p *parser) read() (runtime.Value, error) {
 		if sp, ok := inner.Span(); ok {
 			end = sp.End
 		}
-		return p.attachTrail(node.WithSpan(t.Start, end)), nil
+		return p.trail(node.WithSpan(t.Start, end))
 	case scanner.TokTick:
 		p.advance()
+		if p.err != nil {
+			return runtime.Value{}, p.err
+		}
 		name, err := unquoteTick(t)
 		if err != nil {
 			return runtime.Value{}, err
 		}
-		return p.attachTrail(runtime.Symbol(name).WithSpan(t.Start, t.End)), nil
+		return p.trail(withLex(runtime.Symbol(name), t))
 	case scanner.TokString:
 		p.advance()
+		if p.err != nil {
+			return runtime.Value{}, p.err
+		}
 		s, err := unquoteString(t)
 		if err != nil {
 			return runtime.Value{}, err
 		}
-		return p.attachTrail(runtime.String(s).WithSpan(t.Start, t.End)), nil
+		return p.trail(runtime.String(s).WithSpan(t.Start, t.End))
 	case scanner.TokNumber:
 		p.advance()
+		if p.err != nil {
+			return runtime.Value{}, p.err
+		}
 		word := t.Text
 		if scanner.IsIntLit(word) {
 			n, ok := runtime.ParseInt(word)
 			if !ok {
 				return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "invalid number")
 			}
-			return p.attachTrail(n.WithSpan(t.Start, t.End)), nil
+			return p.trail(withLex(n, t))
 		}
 		f, err := strconv.ParseFloat(word, 64)
 		if err != nil {
 			return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "invalid number")
 		}
-		return p.attachTrail(runtime.Float(f).WithSpan(t.Start, t.End)), nil
+		return p.trail(withLex(runtime.Float(f), t))
 	case scanner.TokSymbol:
 		p.advance()
+		if p.err != nil {
+			return runtime.Value{}, p.err
+		}
 		word := t.Text
 		if word == "" {
 			return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "empty token")
@@ -197,7 +275,10 @@ func (p *parser) read() (runtime.Value, error) {
 		if err != nil {
 			return runtime.Value{}, err
 		}
-		return p.attachTrail(atom), nil
+		if atom.Kind() == runtime.KindSymbol {
+			atom = withLex(atom, t)
+		}
+		return p.trail(atom)
 	default:
 		p.advance()
 		return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "empty token")
@@ -207,15 +288,27 @@ func (p *parser) read() (runtime.Value, error) {
 func (p *parser) readDelimited(close scanner.TokenKind, closeCh byte) (runtime.Value, error) {
 	open := p.tok()
 	p.advance()
+	if p.err != nil {
+		return runtime.Value{}, p.err
+	}
+	idx := len(p.open)
+	p.open = append(p.open, false)
+	defer func() { p.open = p.open[:idx] }()
 	var xs []runtime.Value
 	for {
 		p.skip()
+		if p.err != nil {
+			return runtime.Value{}, p.err
+		}
 		t := p.tok()
 		if t.Kind == scanner.TokEOF {
 			return runtime.Value{}, runtime.ErrorIncomplete(open.Start, p.pos(), "missing "+string(closeCh))
 		}
 		if t.Kind == close {
 			p.advance()
+			if p.err != nil {
+				return runtime.Value{}, p.err
+			}
 			break
 		}
 		if t.Kind == scanner.TokRParen || t.Kind == scanner.TokRBracket {
@@ -238,8 +331,11 @@ func (p *parser) readDelimited(close scanner.TokenKind, closeCh byte) (runtime.V
 		inner = runtime.CallList(xs...)
 	}
 	end := p.endPos()
-	form := p.attachTrail(inner.WithSpan(open.Start, end))
-	if strings.Contains(p.src[open.Start:end], "\n") {
+	form, err := p.trail(inner.WithSpan(open.Start, end))
+	if err != nil {
+		return runtime.Value{}, err
+	}
+	if p.open[idx] {
 		form = form.WithBroke()
 	}
 	return form, nil

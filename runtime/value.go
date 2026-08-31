@@ -94,6 +94,7 @@ type srcInfo struct {
 	blank    bool
 	broke    bool
 	keySpans map[string]Span
+	lex      string
 }
 
 type listData struct {
@@ -136,6 +137,7 @@ func (v Value) withSymName(name string) Value {
 			cmt:     v.src.cmt,
 			blank:   v.src.blank,
 			broke:   v.src.broke,
+			lex:     v.src.lex,
 		}
 	}
 	return n
@@ -848,6 +850,22 @@ func Comment(text string) Value {
 // WithSpan returns a copy of v with a source span.
 func (v Value) WithSpan(start, end int) Value {
 	return v.withSpan(start, end)
+}
+
+// Lexeme is the original source spelling recorded at parse time, if any.
+func (v Value) Lexeme() string {
+	if v.src == nil {
+		return ""
+	}
+	return v.src.lex
+}
+
+// WithLexeme returns a copy of v with original source spelling.
+func (v Value) WithLexeme(s string) Value {
+	src := v.cloneSrc()
+	src.lex = s
+	v.src = src
+	return v
 }
 
 // WithComment returns a copy of v with a trailing comment.
