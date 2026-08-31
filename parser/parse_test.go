@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/scanner"
 )
 
 func parseSrc(src string) ([]runtime.Value, error) {
@@ -272,6 +273,23 @@ func TestParseInternsSymbols(t *testing.T) {
 type failReader struct{ err error }
 
 func (f failReader) Read([]byte) (int, error) { return 0, f.err }
+
+func TestParseScanner(t *testing.T) {
+	src := "(+ 1 2)"
+	viaReader, err := Parse(strings.NewReader(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sc := scanner.New(strings.NewReader(src))
+	sc.SetHighlight(true)
+	viaScan, err := ParseScanner(sc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(viaReader) != 1 || len(viaScan) != 1 || !viaReader[0].Equal(viaScan[0]) {
+		t.Fatalf("reader=%v scanner=%v", viaReader, viaScan)
+	}
+}
 
 func TestParseIOError(t *testing.T) {
 	boom := errors.New("boom")

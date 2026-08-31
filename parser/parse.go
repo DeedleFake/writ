@@ -71,7 +71,13 @@ func withLex(v runtime.Value, t scanner.Token) runtime.Value {
 
 // Parse reads r into top-level forms. Comments are included.
 func Parse(r io.Reader) ([]runtime.Value, error) {
-	p := &parser{sc: scanner.New(r)}
+	return ParseScanner(scanner.New(r))
+}
+
+// ParseScanner reads top-level forms from sc. Highlight is turned off.
+func ParseScanner(sc *scanner.Scanner) ([]runtime.Value, error) {
+	sc.SetHighlight(false)
+	p := &parser{sc: sc}
 	p.peek()
 	if p.err != nil {
 		return nil, p.err
