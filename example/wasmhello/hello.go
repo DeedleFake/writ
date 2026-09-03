@@ -1,3 +1,5 @@
+//go:build js || wasm
+
 // A WASM package for (import ...) via
 //
 //	GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o wasmhello.wasm
