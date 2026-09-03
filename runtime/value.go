@@ -224,7 +224,11 @@ func CallList(xs ...Value) Value {
 }
 
 // Native boxes a host object. Native values are opaque to Writ.
+// v must not be an untyped nil; use a typed nil pointer if needed.
 func Native(v any) Value {
+	if v == nil {
+		panic("runtime: Native(nil)")
+	}
 	return Value{k: KindNative, p: v}
 }
 
@@ -491,15 +495,6 @@ func (v Value) As(dst any) bool {
 	if !elem.CanSet() {
 		return false
 	}
-	if v.p == nil {
-		switch elem.Kind() {
-		case reflect.Interface, reflect.Pointer, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan, reflect.UnsafePointer:
-			elem.Set(reflect.Zero(elem.Type()))
-			return true
-		default:
-			return false
-		}
-	}
 	sv := reflect.ValueOf(v.p)
 	if !sv.IsValid() || !sv.Type().AssignableTo(elem.Type()) {
 		return false
@@ -510,22 +505,12 @@ func (v Value) As(dst any) bool {
 
 // AsType type-asserts a KindNative value to T.
 // Prefer it over [Value.As] when T is known at compile time.
-func (v Value) AsType[T any]() (T, bool) {
-	var zero T
+func (v Value) AsType[T any]() (val T, ok bool) {
 	if v.k != KindNative {
-		return zero, false
+		return val, false
 	}
-	if v.p == nil {
-		rt := reflect.TypeOf(&zero).Elem()
-		switch rt.Kind() {
-		case reflect.Interface, reflect.Pointer, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan, reflect.UnsafePointer:
-			return zero, true
-		default:
-			return zero, false
-		}
-	}
-	out, ok := v.p.(T)
-	return out, ok
+	val, ok = v.p.(T)
+	return val, ok
 }
 
 func (v Value) isKeySym() bool {

@@ -143,11 +143,18 @@ func TestNativeEqualPrintAs(t *testing.T) {
 	if _, ok := Int64(1).AsType[*nativeEqBox](); ok {
 		t.Fatal("AsType on non-native")
 	}
-	nilNat := Native(nil)
-	if got, ok := nilNat.AsType[*nativeEqBox](); !ok || got != nil {
-		t.Fatal("AsType nil pointer")
-	}
-	if _, ok := nilNat.AsType[int](); ok {
-		t.Fatal("AsType nil into non-nillable")
+	func() {
+		defer func() {
+			if recover() == nil {
+				t.Fatal("Native(nil) should panic")
+			}
+		}()
+		_ = Native(nil)
+	}()
+	var typedNil *nativeEqBox
+	tn := Native(typedNil)
+	gotNil, ok := tn.AsType[*nativeEqBox]()
+	if !ok || gotNil != nil {
+		t.Fatal("AsType typed nil")
 	}
 }
