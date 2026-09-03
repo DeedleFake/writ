@@ -29,18 +29,6 @@ func (rt *Runtime) loadImport(spec, fromFile string) (runtime.Value, error) {
 	if exp, ok := rt.m.Loaded(path); ok {
 		return exp, nil
 	}
-	if kind == "plugin" {
-		if rt.m.Checking() || !rt.nativePlugins {
-			return runtime.Value{}, runtime.ErrorMsg("native plugins are disabled")
-		}
-		pkg, err := runtime.LoadPlugin(path)
-		if err != nil {
-			return runtime.Value{}, err
-		}
-		exp := runtime.PackageValue(pkg)
-		rt.m.RememberPackage(path, exp)
-		return exp, nil
-	}
 	if kind == "wasm" {
 		pkg, err := runtime.LoadWasm(path)
 		if err != nil {
@@ -65,15 +53,6 @@ func (rt *Runtime) loadImport(spec, fromFile string) (runtime.Value, error) {
 		return runtime.Value{}, parseErr(err, path)
 	}
 	return rt.m.EvalModule(path, forms)
-}
-
-func pluginExt(ext string) bool {
-	switch strings.ToLower(ext) {
-	case ".so", ".dylib", ".dll":
-		return true
-	default:
-		return false
-	}
 }
 
 func wasmExt(ext string) bool {
@@ -120,9 +99,6 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 		return spec, "pkg", nil
 	}
 	ext := strings.ToLower(filepath.Ext(spec))
-	if pluginExt(ext) && !rt.nativePlugins {
-		return "", "", runtime.ErrorMsg("native plugins are disabled")
-	}
 	absSpec := filepath.IsAbs(spec)
 	if absSpec && !rt.allowAbsolute {
 		return "", "", runtime.ErrorMsg("absolute import paths are disabled")
@@ -147,9 +123,6 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 		var more []string
 		for _, c := range candidates {
 			more = append(more, c+".writ", c+".wasm")
-			if rt.nativePlugins && runtime.PluginsSupported() {
-				more = append(more, c+".so", c+".dylib", c+".dll")
-			}
 		}
 		candidates = append(candidates, more...)
 	}
@@ -169,11 +142,6 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 		e := strings.ToLower(filepath.Ext(abs))
 		k := "writ"
 		switch {
-		case pluginExt(e):
-			if !rt.nativePlugins {
-				return "", "", false
-			}
-			k = "plugin"
 		case wasmExt(e):
 			k = "wasm"
 		case e != ".writ":
@@ -188,9 +156,6 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 		if p, k, ok := tryFile(c); ok {
 			return p, k, nil
 		}
-	}
-	if pluginExt(ext) {
-		return "", "", runtime.Errorf("plugin not found: %s", spec)
 	}
 	return "", "", runtime.Errorf("cannot find import %q", spec)
 }
@@ -268,10 +233,6 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 		if e, ok := rt.exportCache[path]; ok {
 			return e.t, prefixImportDiags(path, e.diags), nil
 		}
-	}
-	if kind == "plugin" {
-		anyT := types.Any()
-		return types.Dynamic(types.MapType(nil, &anyT)), nil, nil
 	}
 	if kind == "wasm" {
 		if exp, ok := rt.m.Loaded(path); ok {

@@ -76,7 +76,7 @@ func TestWasmCheckInstantiates(t *testing.T) {
 	}
 }
 
-func TestWasmWithoutNativePlugins(t *testing.T) {
+func TestWasmLoadsByDefault(t *testing.T) {
 	wasm := buildWasmHello(t)
 	rt := New(WithAllowAbsoluteImports())
 	v, err := rt.Eval(rd(`(map-get (import "` + filepath.ToSlash(wasm) + `") 'version)`))

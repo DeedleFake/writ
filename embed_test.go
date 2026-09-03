@@ -551,9 +551,9 @@ func TestSearchPathSkipsCwd(t *testing.T) {
 	}
 }
 
-func TestPluginsDisabledByDefault(t *testing.T) {
+func TestUnknownSuffixImportRejected(t *testing.T) {
 	_, err := New().Eval(rd(`(import "missing.so")`))
-	if err == nil || !strings.Contains(err.Error(), "plugin") {
+	if err == nil || !strings.Contains(err.Error(), "cannot find import") {
 		t.Fatalf("got %v", err)
 	}
 }

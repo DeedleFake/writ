@@ -306,7 +306,7 @@ func (m *Machine) EvalModule(path string, forms []Value) (Value, error) {
 	return exp, nil
 }
 
-// RememberPackage caches a native plugin export. Caller must hold Lock.
+// RememberPackage caches a wasm package export. Caller must hold Lock.
 func (m *Machine) RememberPackage(path string, exp Value) {
 	m.rememberLoaded(path, &loadedPkg{exports: exp})
 }
