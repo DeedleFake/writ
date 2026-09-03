@@ -51,6 +51,8 @@ Integers are arbitrary-precision. `1` is an integer; `1.0` is a float. `+`, `-`,
 
 Lists are `[a b c]`. Maps are `[k: v]` or empty `[:]`. Mixing plain items and `k:` pairs in one `[]` is a parse error. Map keys are symbols: `(map-get m 'k)`. Required field access is `m.k` or `(. m k)`; a missing key or a non-map left side is an error. `map-get` still returns `nil` for a missing key. Dots in a symbol name are written with ticks: `` `io.write` ``. `'`, `,`, and `@` apply to the whole dotted token (`'io.write` is quote of `(. io write)`); unquote of only the left is `(. ,m write)`.
 
+Quote (`'`), unquote (`,`), splice (`@`), and comments are syntax forms, not runtime values. After eval they are gone, except nested quote which becomes the list `(quote …)`.
+
 A `defm` body is expand-time fragments. Each result is one form at the call site. A top-level `@` splices a list of forms into that sequence. In a `fn` / `let` / `if` / `after` / `on` body, and at the top of a script, a call that expands to several forms is those forms in place. In expression position they run in order and the value is the last form.
 
 ```
