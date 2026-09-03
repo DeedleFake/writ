@@ -6,6 +6,8 @@ import (
 	"math/big"
 	"strings"
 	"testing"
+
+	"deedles.dev/writ/syntax"
 )
 
 func roundTrip(t *testing.T, v Value, ht *HandleTable) Value {
@@ -49,10 +51,6 @@ func TestWcodecLiterals(t *testing.T) {
 		CallList(Symbol("if"), False, Int64(1)),
 		EmptyMap(),
 		MapFrom(MapPair{Key: Symbol("a"), Value: Int64(1)}, MapPair{Key: Symbol("b"), Value: String("x")}),
-		Quote(Symbol("x")),
-		Unquote(CallList(Symbol("f"), Int64(1))),
-		Splice(List(Int64(1), Int64(2))),
-		Comment("; hi"),
 	}
 	for _, c := range cases {
 		got := roundTrip(t, c, nil)
@@ -82,7 +80,7 @@ func TestWcodecNaN(t *testing.T) {
 func TestWcodecHandle(t *testing.T) {
 	ht := NewHandleTable()
 	fn := Value{k: KindFn, p: &fnVal{name: "greet", native: func(args []Value) (Value, error) { return String("ok"), nil }}}
-	mac := Value{k: KindMacro, p: &fnVal{name: "unless", native: func(args []Value) (Value, error) { return Nil, nil }}}
+	mac := Value{k: KindMacro, p: &fnVal{name: "unless", macro: func(args []syntax.Form) (syntax.Form, error) { return syntax.Nil, nil }}}
 	nat := Native(3)
 	for i, v := range []Value{fn, mac, nat} {
 		got := roundTrip(t, v, ht)
@@ -146,8 +144,8 @@ func TestWcodecPackageTable(t *testing.T) {
 	p := Package{
 		Funcs: map[string]Func{"greet": func(args []Value) (Value, error) { return Nil, nil }},
 		Vals:  map[string]Value{"version": Int64(1)},
-		Macros: map[string]Func{
-			"unless": func(args []Value) (Value, error) { return Nil, nil },
+		Macros: map[string]Macro{
+			"unless": func(args []syntax.Form) (syntax.Form, error) { return syntax.Nil, nil },
 		},
 	}
 	b, err := EncodePackageTable(p, nil)
@@ -190,4 +188,64 @@ func mustBig(s string) *big.Int {
 		panic(s)
 	}
 	return n
+}
+
+func formRoundTrip(t *testing.T, v syntax.Form) syntax.Form {
+	t.Helper()
+	b, err := EncodeForm(v)
+	if err != nil {
+		t.Fatalf("encode form %s: %v", v, err)
+	}
+	got, err := DecodeForm(b)
+	if err != nil {
+		t.Fatalf("decode form %s: %v", v, err)
+	}
+	return got
+}
+
+func TestWcodecForm(t *testing.T) {
+	cases := []syntax.Form{
+		syntax.Int64(0),
+		syntax.Int64(-1),
+		syntax.Float(1.5),
+		syntax.String("hello"),
+		syntax.Symbol("x"),
+		syntax.True,
+		syntax.False,
+		syntax.Nil,
+		syntax.List(syntax.Int64(1), syntax.String("a")),
+		syntax.CallList(syntax.Symbol("if"), syntax.False, syntax.Int64(1)),
+		syntax.EmptyMap(),
+		syntax.MapFrom(syntax.MapPair{Key: syntax.Symbol("a"), Value: syntax.Int64(1)}),
+		syntax.Quote(syntax.Symbol("x")),
+		syntax.Unquote(syntax.CallList(syntax.Symbol("f"), syntax.Int64(1))),
+		syntax.Splice(syntax.List(syntax.Int64(1), syntax.Int64(2))),
+		syntax.Comment("; hi"),
+		syntax.Quote(syntax.Quote(syntax.Symbol("x"))),
+	}
+	for _, c := range cases {
+		got := formRoundTrip(t, c)
+		if c.Kind() == syntax.KindFloat {
+			if got.Kind() != syntax.KindFloat || got.Float64() != c.Float64() {
+				t.Fatalf("float: got %v want %v", got, c)
+			}
+			continue
+		}
+		if !got.Equal(c) {
+			t.Fatalf("form round-trip %s: got %s kind=%s", c, got, got.Kind())
+		}
+		if c.Kind() == syntax.KindList && got.IsVec() != c.IsVec() {
+			t.Fatalf("vecflag %s: got vec=%v", c, got.IsVec())
+		}
+	}
+}
+
+func TestWcodecValueRejectsFormTags(t *testing.T) {
+	b, err := EncodeForm(syntax.Quote(syntax.Symbol("x")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Decode(b, nil); err == nil {
+		t.Fatal("value decode of quote tag")
+	}
 }

@@ -7,6 +7,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"deedles.dev/writ/syntax"
 )
 
 func TestLoadWasmMissingAndGarbage(t *testing.T) {
@@ -52,11 +54,11 @@ func TestLoadWasmHello(t *testing.T) {
 	if !ok || unless == nil {
 		t.Fatal("unless")
 	}
-	frags, err := unless([]Value{False, Int64(7)})
+	frags, err := unless([]syntax.Form{syntax.False, syntax.Int64(7)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if frags.Kind() != KindList || len(frags.Items()) != 1 {
+	if frags.Kind() != syntax.KindList || len(frags.Items()) != 1 {
 		t.Fatalf("unless frags: %v", frags)
 	}
 }

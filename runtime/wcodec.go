@@ -200,19 +200,6 @@ func (e *enc) value(v Value, ht *HandleTable) error {
 			}
 		}
 		return nil
-	case KindQuote:
-		e.u8(tagQuote)
-		return e.value(v.innerVal(), ht)
-	case KindUnquote:
-		e.u8(tagUnquote)
-		return e.value(v.innerVal(), ht)
-	case KindSplice:
-		e.u8(tagSplice)
-		return e.value(v.innerVal(), ht)
-	case KindComment:
-		e.u8(tagComment)
-		e.str(v.s)
-		return nil
 	case KindFn, KindMacro, KindNative:
 		if ht == nil {
 			return errMsg("handle table required")
@@ -387,30 +374,8 @@ func (d *dec) value(ht *HandleTable) (Value, error) {
 			pairs[i] = MapPair{Key: k, Value: val}
 		}
 		return MapFrom(pairs...), nil
-	case tagQuote:
-		inner, err := d.value(ht)
-		if err != nil {
-			return Value{}, err
-		}
-		return Quote(inner), nil
-	case tagUnquote:
-		inner, err := d.value(ht)
-		if err != nil {
-			return Value{}, err
-		}
-		return Unquote(inner), nil
-	case tagSplice:
-		inner, err := d.value(ht)
-		if err != nil {
-			return Value{}, err
-		}
-		return Splice(inner), nil
-	case tagComment:
-		s, err := d.str()
-		if err != nil {
-			return Value{}, err
-		}
-		return Comment(s), nil
+	case tagQuote, tagUnquote, tagSplice, tagComment:
+		return Value{}, errMsg("quote, unquote, splice, and comment are forms, not values")
 	case tagHandle:
 		id, err := d.u64()
 		if err != nil {
@@ -521,7 +486,7 @@ func DecodePackageTable(r io.Reader, ht *HandleTable) (Package, error) {
 	p := Package{
 		Funcs:  map[string]Func{},
 		Vals:   map[string]Value{},
-		Macros: map[string]Func{},
+		Macros: map[string]Macro{},
 	}
 	for i := uint32(0); i < n; i++ {
 		kind, err := d.u8()
