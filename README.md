@@ -74,13 +74,14 @@ Each key is the local name; each value is a path expression. Keyed `import` must
 
 Relative paths are resolved from the importing file. Search directories can be set on the runtime (`WithSearchPath`) or with `writ run -I DIR` / `writ check -I DIR` / `writ repl -I DIR`.
 
-Resolution order for a path without a known suffix:
+An import string is either a `RegisterPackage` name or a filesystem path with an explicit `.writ` or `.wasm` suffix. Writ does not invent a suffix for bare paths.
 
-1. An in-process package registered with `RegisterPackage`
-2. A `.writ` file under the importing file’s directory and `WithSearchPath` (cwd is used only when there is no importing file and no search path)
-3. A native plugin (`.so` / `.dylib` / `.dll`) only if the host called `WithNativePlugins`
+Resolution order:
 
-Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbsoluteImports` is set. Untrusted `Eval` should leave plugins off and set an explicit search path. The default unlimited eval budget is not a sandbox.
+1. An in-process package registered with `RegisterPackage` (any name, including names without a suffix)
+2. A `.writ` or `.wasm` path under the importing file's directory and `WithSearchPath` (cwd is used only when there is no importing file and no search path). WASM packages are sandboxed (no WASI preopens, no filesystem or network) and load by default, including during `check`
+
+Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbsoluteImports` is set. Unknown suffixes (including `.so`) and bare paths that are not registered packages are rejected. Untrusted `Eval` should set an explicit search path. The default unlimited eval budget is not a sandbox.
 
 ```
 (let [lib: (import "lib.writ")]
@@ -116,13 +117,9 @@ _ = rt.Fire("tick", map[string]runtime.Value{"n": runtime.Int64(1)})
 res := rt.Check(strings.NewReader(src)) // diagnostics and type hints
 ```
 
-A native plugin exports:
+A WASM package is a WASI reactor (`GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared`) that exports `writ_abi`, `writ_alloc`, `writ_package`, and `writ_call`. See `example/wasmhello`.
 
-```go
-func WritPackage() runtime.Package
-```
-
-Build with `go build -buildmode=plugin`. In-process `RegisterPackage` is the embedding path that works everywhere, including WASM.
+In-process `RegisterPackage` is the embedding path that works everywhere, including when the host itself is compiled to WASM. Binary packages for `(import)` are WASM only; Go `plugin` / `.so` packages are not supported.
 
 ## Parse, format, and tokens
 

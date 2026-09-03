@@ -29,5 +29,5 @@ Preconditions:
 ## Gotchas
 
 - Diagnostics go to stderr; do not assert on stdout.
-- `check` does not open native plugins (embed tests cover that). A `.so` import during check is not a CLI plugin-load proof.
+- Plugins are gone; `.so` imports fail like any unknown suffix. `check` does instantiate `.wasm` imports so macros can expand.
 - Column is an offset into the file, 1-based line/col as printed by the CLI.

@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	github.com/peterh/liner v1.2.2
+	github.com/tetratelabs/wazero v1.12.0
 	golang.org/x/term v0.45.0
 )
 

@@ -627,7 +627,7 @@ func evalMacroCall(mac Value, raw []Value, env *env, c *ctx, call Value) (Value,
 	if name == "" {
 		name = "macro"
 	}
-	frags, err := applyMacro(name, f.clauses, raw, c, call, f.env)
+	frags, err := applyMacro(name, f, raw, c, call)
 	if err != nil {
 		return Value{}, err
 	}

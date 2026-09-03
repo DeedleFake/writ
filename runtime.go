@@ -21,7 +21,6 @@ type Runtime struct {
 
 	search        []string
 	stdout        io.Writer
-	nativePlugins bool
 	allowAbsolute bool
 
 	pkgs        map[string]runtime.Package
@@ -66,12 +65,6 @@ func WithEvalLimit(n int) Option {
 // WithAfterError sets a hook for errors from (after ...) callbacks.
 func WithAfterError(fn func(error)) Option {
 	return func(rt *Runtime) { rt.m.SetAfterError(fn) }
-}
-
-// WithNativePlugins allows (import) of Go plugin files (.so/.dylib/.dll).
-// Off by default. Plugins are never opened during Check.
-func WithNativePlugins() Option {
-	return func(rt *Runtime) { rt.nativePlugins = true }
 }
 
 // WithAllowAbsoluteImports allows absolute import paths and paths that

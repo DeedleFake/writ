@@ -342,7 +342,45 @@ func hygienicFnLike(v Value, imported []Value, subst map[string]string, name str
 	return v
 }
 
-func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value, defEnv *env) ([]Value, error) {
+func applyMacro(name string, f *fnVal, raw []Value, c *ctx, call Value) ([]Value, error) {
+	if f != nil && f.native != nil {
+		callNative := func() (Value, error) { return f.native(raw) }
+		var result Value
+		var err error
+		if c != nil && c.rt != nil {
+			result, err = c.rt.hostCall(callNative)
+		} else {
+			result, err = callNative()
+		}
+		if err != nil {
+			return nil, err
+		}
+		var frags []Value
+		if result.k == KindList {
+			frags = append([]Value{}, result.Items()...)
+		} else {
+			frags = []Value{result}
+		}
+		var imported []Value
+		for _, a := range raw {
+			collectImported(a, nil, &imported)
+		}
+		h := &hygState{}
+		out := make([]Value, len(frags))
+		for i, frag := range frags {
+			out[i] = hygienic(frag, imported, map[string]string{}, h)
+			if !out[i].HasSpan() && call.HasSpan() {
+				out[i] = out[i].withSpan(call.srcSpan().Start, call.srcSpan().End)
+			}
+		}
+		return out, nil
+	}
+	var clauses []Clause
+	var defEnv *env
+	if f != nil {
+		clauses = f.clauses
+		defEnv = f.env
+	}
 	parsed, err := parseCallRaw(raw)
 	if err != nil {
 		e := asError(err)
@@ -398,28 +436,28 @@ func applyMacro(name string, clauses []Clause, raw []Value, c *ctx, call Value, 
 	return nil, errValf(call, "no matching clause for %s", name)
 }
 
-func asMacroCall(v Value, env *env, c *ctx) (name string, clauses []Clause, args []Value, defEnv *env, ok bool) {
+func asMacroCall(v Value, env *env, c *ctx) (name string, f *fnVal, args []Value, ok bool) {
 	if v.k != KindList || v.IsVec() {
-		return "", nil, nil, nil, false
+		return "", nil, nil, false
 	}
 	xs := filterComments(v.Items())
 	if len(xs) == 0 {
-		return "", nil, nil, nil, false
+		return "", nil, nil, false
 	}
 	head := xs[0]
 	if head.k == KindSymbol {
 		name = head.Name()
-		clauses, ok = c.macros[name]
-		if !ok {
-			return "", nil, nil, nil, false
+		clauses, found := c.macros[name]
+		if !found {
+			return "", nil, nil, false
 		}
-		return name, clauses, xs[1:], c.macroEnv, true
+		return name, &fnVal{clauses: clauses, env: c.macroEnv, name: name}, xs[1:], true
 	}
-	name, f, ok := resolveDotMacro(head, env)
+	name, f, ok = resolveDotMacro(head, env)
 	if !ok || f == nil {
-		return "", nil, nil, nil, false
+		return "", nil, nil, false
 	}
-	return name, f.clauses, xs[1:], f.env, true
+	return name, f, xs[1:], true
 }
 
 func isDotCall(v Value) bool {
@@ -524,8 +562,8 @@ func expandForms(forms []Value, env *env, c *ctx) ([]Value, error) {
 }
 
 func expandIn(v Value, env *env, c *ctx) ([]Value, error) {
-	if name, clauses, args, defEnv, ok := asMacroCall(v, env, c); ok {
-		frags, err := applyMacro(name, clauses, args, c, v, defEnv)
+	if name, f, args, ok := asMacroCall(v, env, c); ok {
+		frags, err := applyMacro(name, f, args, c, v)
 		if err != nil {
 			return nil, err
 		}

@@ -5,7 +5,7 @@ description: Drive the Writ Lisp CLI (run, check, fmt, repl, help) the way a use
 
 # Verify Writ
 
-Writ is a Lisp embedded in Go. The user-facing app is the `writ` CLI in `cmd/writ`. The Go library (`RegisterPackage`, `Eval`, `Check`) is a second surface; do not treat library tests as CLI proof. Native `.so` plugins are off in the CLI (`WithNativePlugins` is embed-only).
+Writ is a Lisp embedded in Go. The user-facing app is the `writ` CLI in `cmd/writ`. The Go library (`RegisterPackage`, `Eval`, `Check`) is a second surface; do not treat library tests as CLI proof. Go plugin / `.so` packages are gone; binary packages are WASM only.
 
 This skill is for agents. Commands are literal.
 
@@ -81,7 +81,7 @@ Proof standards:
 - For `run`, assert printed values (`hello from writ` / `42`), not just exit 0.
 - For `check` failure, assert `line:col` and the diagnostic text.
 - For `fmt -w`, read the file back; do not trust the flag name.
-- Mocks: none. Native plugins are not a CLI path.
+- Mocks: none. Plugins are gone; only WASM binary packages (plus `.writ` and `RegisterPackage`).
 
 ## Cleanup
 

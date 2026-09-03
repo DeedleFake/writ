@@ -11,11 +11,12 @@ import (
 // Func is a native function. Arguments are positional.
 type Func func(args []Value) (Value, error)
 
-// Package is funcs and values for (import). The checker types funcs as
-// fn(...) -> dynamic(any()) and values as any().
+// Package is funcs, macros, and values for (import). The checker types funcs
+// as fn(...) -> dynamic(any()) and values as any().
 type Package struct {
-	Funcs map[string]Func
-	Vals  map[string]Value
+	Funcs  map[string]Func
+	Macros map[string]Func
+	Vals   map[string]Value
 }
 
 // Scheduler runs (after seconds ...) bodies. delay is in real time.
@@ -305,7 +306,7 @@ func (m *Machine) EvalModule(path string, forms []Value) (Value, error) {
 	return exp, nil
 }
 
-// RememberPackage caches a native plugin export. Caller must hold Lock.
+// RememberPackage caches a wasm package export. Caller must hold Lock.
 func (m *Machine) RememberPackage(path string, exp Value) {
 	m.rememberLoaded(path, &loadedPkg{exports: exp})
 }
@@ -464,6 +465,10 @@ func PackageValue(p Package) Value {
 	for name, f := range p.Funcs {
 		fn := f
 		names[name] = Value{k: KindFn, p: &fnVal{native: fn, name: name}}
+	}
+	for name, f := range p.Macros {
+		fn := f
+		names[name] = Value{k: KindMacro, p: &fnVal{native: fn, name: name}}
 	}
 	maps.Copy(names, p.Vals)
 	return mapFromNames(names)
