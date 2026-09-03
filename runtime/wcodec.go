@@ -600,7 +600,7 @@ func DecodePackageTableForeign(r io.Reader, ht *HandleTable, foreign func(uint64
 		Vals:   map[string]Value{},
 		Macros: map[string]Macro{},
 	}
-	for i := uint32(0); i < n; i++ {
+	for range n {
 		kind, err := d.u8()
 		if err != nil {
 			return Package{}, err
