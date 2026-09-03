@@ -32,5 +32,5 @@ Preconditions:
 
 - Without `main`, top-level `print` still runs; missing `main` is not an error.
 - Relative import paths resolve from the importing file, not cwd. `-I` is extra search dirs.
-- Native `.so` plugins are not loaded by this CLI. Do not use `writ run` as proof of `plugin.Open`. WASM `.wasm` packages do load. Prove those with `writ run` of a script that imports a `.wasm` file.
+- Go plugins are gone. Prove binary packages with `writ run` of a script that imports a `.wasm` file (see `example/wasmhello`), not `.so` / `plugin.Open`.
 - `print` is registered by the CLI. A library embed without `RegisterPrint` will not print.
