@@ -8,13 +8,14 @@ import (
 
 	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/scanner"
+	"deedles.dev/writ/syntax"
 )
 
-func parseSrc(src string) ([]runtime.Value, error) {
+func parseSrc(src string) ([]syntax.Form, error) {
 	return Parse(strings.NewReader(src))
 }
 
-func parse1(t *testing.T, src string) runtime.Value {
+func parse1(t *testing.T, src string) syntax.Form {
 	t.Helper()
 	forms, err := parseSrc(src)
 	if err != nil {
@@ -28,19 +29,19 @@ func parse1(t *testing.T, src string) runtime.Value {
 
 func TestParseNumbers(t *testing.T) {
 	n := parse1(t, "1")
-	if n.Kind() != runtime.KindInt || n.BigInt().Int64() != 1 {
+	if n.Kind() != syntax.KindInt || n.BigInt().Int64() != 1 {
 		t.Fatalf("1: %+v", n)
 	}
 	f := parse1(t, "1.0")
-	if f.Kind() != runtime.KindFloat || f.Float64() != 1.0 {
+	if f.Kind() != syntax.KindFloat || f.Float64() != 1.0 {
 		t.Fatalf("1.0: %+v", f)
 	}
 	neg := parse1(t, "-3.5")
-	if neg.Kind() != runtime.KindFloat || neg.Float64() != -3.5 {
+	if neg.Kind() != syntax.KindFloat || neg.Float64() != -3.5 {
 		t.Fatalf("-3.5: %+v", neg)
 	}
 	big := parse1(t, "999999999999999999999")
-	if big.Kind() != runtime.KindInt || big.BigInt().String() != "999999999999999999999" {
+	if big.Kind() != syntax.KindInt || big.BigInt().String() != "999999999999999999999" {
 		t.Fatalf("big int: %s", big)
 	}
 }
@@ -51,15 +52,15 @@ func TestParseListAndMap(t *testing.T) {
 		t.Fatalf("list: %+v", l)
 	}
 	m := parse1(t, "[k: 1]")
-	if m.Kind() != runtime.KindMap {
+	if m.Kind() != syntax.KindMap {
 		t.Fatalf("map kind %v", m.Kind())
 	}
 	v, ok := m.MapGet("k")
-	if !ok || v.Kind() != runtime.KindInt {
+	if !ok || v.Kind() != syntax.KindInt {
 		t.Fatalf("map k: %v %v", ok, v)
 	}
 	empty := parse1(t, "[:]")
-	if empty.Kind() != runtime.KindMap || len(empty.Pairs()) != 0 {
+	if empty.Kind() != syntax.KindMap || len(empty.Pairs()) != 0 {
 		t.Fatalf("empty map: %+v", empty)
 	}
 }
@@ -73,19 +74,19 @@ func TestParseMapMixError(t *testing.T) {
 
 func TestParseQuoteUnquoteSplice(t *testing.T) {
 	q := parse1(t, "'x")
-	if q.Kind() != runtime.KindQuote || q.Inner().Name() != "x" {
+	if q.Kind() != syntax.KindQuote || q.Inner().Name() != "x" {
 		t.Fatalf("quote: %+v", q)
 	}
 	u := parse1(t, ",x")
-	if u.Kind() != runtime.KindUnquote {
+	if u.Kind() != syntax.KindUnquote {
 		t.Fatalf("unquote: %+v", u)
 	}
 	s := parse1(t, "@xs")
-	if s.Kind() != runtime.KindSplice {
+	if s.Kind() != syntax.KindSplice {
 		t.Fatalf("splice: %+v", s)
 	}
 	call := parse1(t, "(+ 1 @[2 3])")
-	if call.Kind() != runtime.KindList || call.IsVec() {
+	if call.Kind() != syntax.KindList || call.IsVec() {
 		t.Fatalf("call: %+v", call)
 	}
 }
@@ -95,7 +96,7 @@ func TestParseKeywordsAndComments(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(forms) != 2 || forms[0].Kind() != runtime.KindComment {
+	if len(forms) != 2 || forms[0].Kind() != syntax.KindComment {
 		t.Fatalf("forms: %+v", forms)
 	}
 	if forms[1].TrailingComment() == "" {
@@ -110,27 +111,27 @@ func TestParseKeywordsAndComments(t *testing.T) {
 
 func TestParseTickSymbol(t *testing.T) {
 	s := parse1(t, "`foo bar`")
-	if s.Kind() != runtime.KindSymbol || s.Name() != "foo bar" {
+	if s.Kind() != syntax.KindSymbol || s.Name() != "foo bar" {
 		t.Fatalf("tick: %+v", s)
 	}
 	s = parse1(t, "`io.write`")
-	if s.Kind() != runtime.KindSymbol || s.Name() != "io.write" {
+	if s.Kind() != syntax.KindSymbol || s.Name() != "io.write" {
 		t.Fatalf("tick dotted: %+v", s)
 	}
 }
 
-func dottedCall(t *testing.T, v runtime.Value) []string {
+func dottedCall(t *testing.T, v syntax.Form) []string {
 	t.Helper()
-	if v.Kind() != runtime.KindList || v.IsVec() {
+	if v.Kind() != syntax.KindList || v.IsVec() {
 		t.Fatalf("want call, got %+v", v)
 	}
 	xs := v.Items()
-	if len(xs) < 3 || !runtime.IsName(xs[0], ".") {
+	if len(xs) < 3 || !syntax.IsName(xs[0], ".") {
 		t.Fatalf("want (. ...), got %+v", v)
 	}
 	out := make([]string, len(xs)-1)
 	for i, x := range xs[1:] {
-		if x.Kind() != runtime.KindSymbol {
+		if x.Kind() != syntax.KindSymbol {
 			t.Fatalf("segment %d: %+v", i, x)
 		}
 		out[i] = x.Name()
@@ -153,11 +154,11 @@ func TestParseDottedAccess(t *testing.T) {
 	}
 	comp := parse1(t, "(. (f) write)")
 	xs := comp.Items()
-	if len(xs) != 3 || !runtime.IsName(xs[0], ".") || xs[1].Kind() != runtime.KindList || !runtime.IsName(xs[2], "write") {
+	if len(xs) != 3 || !syntax.IsName(xs[0], ".") || xs[1].Kind() != syntax.KindList || !syntax.IsName(xs[2], "write") {
 		t.Fatalf("computed left: %+v", comp)
 	}
 	q := parse1(t, "'io.write")
-	if q.Kind() != runtime.KindQuote {
+	if q.Kind() != syntax.KindQuote {
 		t.Fatalf("quote kind: %+v", q)
 	}
 	got = dottedCall(t, q.Inner())
@@ -188,11 +189,11 @@ func TestParseDottedErrors(t *testing.T) {
 
 func TestParseStrings(t *testing.T) {
 	v := parse1(t, `"hi"`)
-	if v.Kind() != runtime.KindString || v.Text() != "hi" {
+	if v.Kind() != syntax.KindString || v.Text() != "hi" {
 		t.Fatalf("hi: %v", v)
 	}
 	v = parse1(t, `"a\nb"`)
-	if v.Kind() != runtime.KindString || v.Text() != "a\nb" {
+	if v.Kind() != syntax.KindString || v.Text() != "a\nb" {
 		t.Fatalf("escape: %q", v.Text())
 	}
 }
@@ -244,7 +245,7 @@ func TestIncomplete(t *testing.T) {
 func TestParseTrueFalseNil(t *testing.T) {
 	for _, name := range []string{"true", "false", "nil"} {
 		v := parse1(t, name)
-		if v.Kind() != runtime.KindSymbol || v.Name() != name {
+		if v.Kind() != syntax.KindSymbol || v.Name() != name {
 			t.Fatalf("%s: %+v", name, v)
 		}
 	}
@@ -260,7 +261,7 @@ func TestParseInternsSymbols(t *testing.T) {
 	}
 	a := forms[0].Inner()
 	b := forms[1].Inner()
-	if a.Kind() != runtime.KindSymbol || !a.Equal(b) || a.Name() != "hits" {
+	if a.Kind() != syntax.KindSymbol || !a.Equal(b) || a.Name() != "hits" {
 		t.Fatalf("a=%v b=%v", a, b)
 	}
 	sa, okA := a.Span()

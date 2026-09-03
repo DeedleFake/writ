@@ -8,6 +8,7 @@ import (
 
 	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/scanner"
+	"deedles.dev/writ/syntax"
 )
 
 type parser struct {
@@ -65,24 +66,24 @@ func (p *parser) noteBroke(text string) {
 	}
 }
 
-func withLex(v runtime.Value, t scanner.Token) runtime.Value {
+func withLex(v syntax.Form, t scanner.Token) syntax.Form {
 	return v.WithSpan(t.Start, t.End).WithLexeme(t.Text)
 }
 
 // Parse reads r into top-level forms. Comments are included.
-func Parse(r io.Reader) ([]runtime.Value, error) {
+func Parse(r io.Reader) ([]syntax.Form, error) {
 	return ParseScanner(scanner.New(r))
 }
 
 // ParseScanner reads top-level forms from sc. Highlight is turned off.
-func ParseScanner(sc *scanner.Scanner) ([]runtime.Value, error) {
+func ParseScanner(sc *scanner.Scanner) ([]syntax.Form, error) {
 	sc.SetHighlight(false)
 	p := &parser{sc: sc}
 	p.peek()
 	if p.err != nil {
 		return nil, p.err
 	}
-	var forms []runtime.Value
+	var forms []syntax.Form
 	nl := p.skipCount()
 	if p.err != nil {
 		return nil, p.err
@@ -156,8 +157,8 @@ func (p *parser) skipH() {
 	p.advance()
 }
 
-func (p *parser) attachTrail(v runtime.Value) runtime.Value {
-	if v.Kind() == runtime.KindComment {
+func (p *parser) attachTrail(v syntax.Form) syntax.Form {
+	if v.Kind() == syntax.KindComment {
 		return v
 	}
 	p.skipH()
@@ -172,58 +173,58 @@ func (p *parser) attachTrail(v runtime.Value) runtime.Value {
 	return v.WithComment(t.Text)
 }
 
-func (p *parser) trail(v runtime.Value) (runtime.Value, error) {
+func (p *parser) trail(v syntax.Form) (syntax.Form, error) {
 	v = p.attachTrail(v)
 	if p.err != nil {
-		return runtime.Value{}, p.err
+		return syntax.Form{}, p.err
 	}
 	return v, nil
 }
 
-func (p *parser) read() (runtime.Value, error) {
+func (p *parser) read() (syntax.Form, error) {
 	p.skip()
 	if p.err != nil {
-		return runtime.Value{}, p.err
+		return syntax.Form{}, p.err
 	}
 	t := p.tok()
 	if t.Kind == scanner.TokEOF {
 		start := max(p.endPos()-1, 0)
-		return runtime.Value{}, runtime.ErrorIncomplete(start, p.pos(), "unexpected end of script")
+		return syntax.Form{}, runtime.ErrorIncomplete(start, p.pos(), "unexpected end of script")
 	}
 	switch t.Kind {
 	case scanner.TokComment:
 		p.advance()
 		if p.err != nil {
-			return runtime.Value{}, p.err
+			return syntax.Form{}, p.err
 		}
-		return runtime.Comment(t.Text).WithSpan(t.Start, t.End), nil
+		return syntax.Comment(t.Text).WithSpan(t.Start, t.End), nil
 	case scanner.TokLParen:
 		return p.readDelimited(scanner.TokRParen, ')')
 	case scanner.TokLBracket:
 		return p.readDelimited(scanner.TokRBracket, ']')
 	case scanner.TokRParen:
 		p.advance()
-		return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "unexpected )")
+		return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "unexpected )")
 	case scanner.TokRBracket:
 		p.advance()
-		return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "unexpected ]")
+		return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "unexpected ]")
 	case scanner.TokQuote, scanner.TokUnquote, scanner.TokSplice:
 		p.advance()
 		if p.err != nil {
-			return runtime.Value{}, p.err
+			return syntax.Form{}, p.err
 		}
 		inner, err := p.read()
 		if err != nil {
-			return runtime.Value{}, err
+			return syntax.Form{}, err
 		}
-		var node runtime.Value
+		var node syntax.Form
 		switch t.Kind {
 		case scanner.TokQuote:
-			node = runtime.Quote(inner)
+			node = syntax.Quote(inner)
 		case scanner.TokUnquote:
-			node = runtime.Unquote(inner)
+			node = syntax.Unquote(inner)
 		default:
-			node = runtime.Splice(inner)
+			node = syntax.Splice(inner)
 		}
 		end := p.endPos()
 		if sp, ok := inner.Span(); ok {
@@ -233,113 +234,113 @@ func (p *parser) read() (runtime.Value, error) {
 	case scanner.TokTick:
 		p.advance()
 		if p.err != nil {
-			return runtime.Value{}, p.err
+			return syntax.Form{}, p.err
 		}
 		name, err := unquoteTick(t)
 		if err != nil {
-			return runtime.Value{}, err
+			return syntax.Form{}, err
 		}
-		return p.trail(withLex(runtime.Symbol(name), t))
+		return p.trail(withLex(syntax.Symbol(name), t))
 	case scanner.TokString:
 		p.advance()
 		if p.err != nil {
-			return runtime.Value{}, p.err
+			return syntax.Form{}, p.err
 		}
 		s, err := unquoteString(t)
 		if err != nil {
-			return runtime.Value{}, err
+			return syntax.Form{}, err
 		}
-		return p.trail(runtime.String(s).WithSpan(t.Start, t.End))
+		return p.trail(syntax.String(s).WithSpan(t.Start, t.End))
 	case scanner.TokNumber:
 		p.advance()
 		if p.err != nil {
-			return runtime.Value{}, p.err
+			return syntax.Form{}, p.err
 		}
 		word := t.Text
 		if scanner.IsIntLit(word) {
-			n, ok := runtime.ParseInt(word)
+			n, ok := syntax.ParseInt(word)
 			if !ok {
-				return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "invalid number")
+				return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "invalid number")
 			}
 			return p.trail(withLex(n, t))
 		}
 		f, err := strconv.ParseFloat(word, 64)
 		if err != nil {
-			return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "invalid number")
+			return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "invalid number")
 		}
-		return p.trail(withLex(runtime.Float(f), t))
+		return p.trail(withLex(syntax.Float(f), t))
 	case scanner.TokSymbol:
 		p.advance()
 		if p.err != nil {
-			return runtime.Value{}, p.err
+			return syntax.Form{}, p.err
 		}
 		word := t.Text
 		if word == "" {
-			return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "empty token")
+			return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "empty token")
 		}
 		atom, err := dottedForm(word, t.Start, t.End)
 		if err != nil {
-			return runtime.Value{}, err
+			return syntax.Form{}, err
 		}
-		if atom.Kind() == runtime.KindSymbol {
+		if atom.Kind() == syntax.KindSymbol {
 			atom = withLex(atom, t)
 		}
 		return p.trail(atom)
 	default:
 		p.advance()
-		return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "empty token")
+		return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "empty token")
 	}
 }
 
-func (p *parser) readDelimited(close scanner.TokenKind, closeCh byte) (runtime.Value, error) {
+func (p *parser) readDelimited(close scanner.TokenKind, closeCh byte) (syntax.Form, error) {
 	open := p.tok()
 	p.advance()
 	if p.err != nil {
-		return runtime.Value{}, p.err
+		return syntax.Form{}, p.err
 	}
 	idx := len(p.open)
 	p.open = append(p.open, false)
 	defer func() { p.open = p.open[:idx] }()
-	var xs []runtime.Value
+	var xs []syntax.Form
 	for {
 		p.skip()
 		if p.err != nil {
-			return runtime.Value{}, p.err
+			return syntax.Form{}, p.err
 		}
 		t := p.tok()
 		if t.Kind == scanner.TokEOF {
-			return runtime.Value{}, runtime.ErrorIncomplete(open.Start, p.pos(), "missing "+string(closeCh))
+			return syntax.Form{}, runtime.ErrorIncomplete(open.Start, p.pos(), "missing "+string(closeCh))
 		}
 		if t.Kind == close {
 			p.advance()
 			if p.err != nil {
-				return runtime.Value{}, p.err
+				return syntax.Form{}, p.err
 			}
 			break
 		}
 		if t.Kind == scanner.TokRParen || t.Kind == scanner.TokRBracket {
-			return runtime.Value{}, runtime.ErrorAt(t.Start, t.End, "unexpected "+t.Text)
+			return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "unexpected "+t.Text)
 		}
 		x, err := p.read()
 		if err != nil {
-			return runtime.Value{}, err
+			return syntax.Form{}, err
 		}
 		xs = append(xs, x)
 	}
-	var inner runtime.Value
+	var inner syntax.Form
 	if closeCh == ']' {
 		var err error
 		inner, err = finishBracket(xs)
 		if err != nil {
-			return runtime.Value{}, err
+			return syntax.Form{}, err
 		}
 	} else {
-		inner = runtime.CallList(xs...)
+		inner = syntax.CallList(xs...)
 	}
 	end := p.endPos()
 	form, err := p.trail(inner.WithSpan(open.Start, end))
 	if err != nil {
-		return runtime.Value{}, err
+		return syntax.Form{}, err
 	}
 	if p.open[idx] {
 		form = form.WithBroke()
@@ -347,13 +348,13 @@ func (p *parser) readDelimited(close scanner.TokenKind, closeCh byte) (runtime.V
 	return form, nil
 }
 
-func finishBracket(xs []runtime.Value) (runtime.Value, error) {
-	items := runtime.FilterComments(xs)
-	if len(items) == 1 && runtime.IsName(items[0], ":") {
-		return runtime.EmptyMap(), nil
+func finishBracket(xs []syntax.Form) (syntax.Form, error) {
+	items := syntax.FilterComments(xs)
+	if len(items) == 1 && syntax.IsName(items[0], ":") {
+		return syntax.EmptyMap(), nil
 	}
-	var pairs []runtime.MapPair
-	keySpans := map[string]runtime.Span{}
+	var pairs []syntax.MapPair
+	keySpans := map[string]syntax.Span{}
 	i := 0
 	keys := 0
 	for i < len(items) {
@@ -361,10 +362,10 @@ func finishBracket(xs []runtime.Value) (runtime.Value, error) {
 		if a.IsKey() {
 			keys++
 			if i+1 >= len(items) || items[i+1].IsKey() {
-				return runtime.Value{}, runtime.ErrorMsg("map key needs a value")
+				return syntax.Form{}, runtime.ErrorMsg("map key needs a value")
 			}
 			name := a.KeyName()
-			pairs = append(pairs, runtime.MapPair{Key: runtime.Symbol(name), Value: items[i+1]})
+			pairs = append(pairs, syntax.MapPair{Key: syntax.Symbol(name), Value: items[i+1]})
 			if sp, ok := a.Span(); ok {
 				keySpans[name] = sp
 			}
@@ -374,42 +375,42 @@ func finishBracket(xs []runtime.Value) (runtime.Value, error) {
 		}
 	}
 	if keys == 0 {
-		return runtime.List(xs...), nil
+		return syntax.List(xs...), nil
 	}
 	if keys*2 != len(items) {
-		return runtime.Value{}, runtime.ErrorMsg("a map cannot mix keys and other items")
+		return syntax.Form{}, runtime.ErrorMsg("a map cannot mix keys and other items")
 	}
-	m := runtime.MapFrom(pairs...)
+	m := syntax.MapFrom(pairs...)
 	if len(keySpans) > 0 {
 		m = m.WithKeySpans(keySpans)
 	}
 	return m, nil
 }
 
-func dottedForm(word string, start, end int) (runtime.Value, error) {
+func dottedForm(word string, start, end int) (syntax.Form, error) {
 	if word == "." || !strings.Contains(word, ".") {
-		return runtime.Symbol(word).WithSpan(start, end), nil
+		return syntax.Symbol(word).WithSpan(start, end), nil
 	}
 	parts := strings.Split(word, ".")
 	if parts[0] == "" {
-		return runtime.Value{}, runtime.ErrorAt(start, end, "dotted name cannot start with .")
+		return syntax.Form{}, runtime.ErrorAt(start, end, "dotted name cannot start with .")
 	}
 	if parts[len(parts)-1] == "" {
-		return runtime.Value{}, runtime.ErrorAt(start, end, "dotted name cannot end with .")
+		return syntax.Form{}, runtime.ErrorAt(start, end, "dotted name cannot end with .")
 	}
-	xs := []runtime.Value{runtime.Symbol(".")}
+	xs := []syntax.Form{syntax.Symbol(".")}
 	off := start
 	for i, part := range parts {
 		if part == "" {
-			return runtime.Value{}, runtime.ErrorAt(start, end, "dotted name cannot contain empty field")
+			return syntax.Form{}, runtime.ErrorAt(start, end, "dotted name cannot contain empty field")
 		}
 		if i > 0 && scanner.IsNumLit(part) {
-			return runtime.Value{}, runtime.ErrorAt(off, off+len(part), "dotted name field must be a name")
+			return syntax.Form{}, runtime.ErrorAt(off, off+len(part), "dotted name field must be a name")
 		}
-		xs = append(xs, runtime.Symbol(part).WithSpan(off, off+len(part)))
+		xs = append(xs, syntax.Symbol(part).WithSpan(off, off+len(part)))
 		off += len(part) + 1
 	}
-	return runtime.CallList(xs...).WithSpan(start, end), nil
+	return syntax.CallList(xs...).WithSpan(start, end), nil
 }
 
 func unquoteTick(t scanner.Token) (string, error) {

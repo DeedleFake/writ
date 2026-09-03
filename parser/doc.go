@@ -1,2 +1,2 @@
-// Package parser reads Writ source into runtime values and pretty-prints it.
+// Package parser reads Writ source into syntax forms and pretty-prints it.
 package parser
