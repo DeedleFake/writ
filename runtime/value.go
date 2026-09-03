@@ -228,8 +228,8 @@ func Native(v any) Value {
 	return Value{k: KindNative, p: v}
 }
 
-// Syntax boxes a source form as a runtime value. Nested quote residuals
-// use this instead of (quote …) lists.
+// Syntax boxes a source form as a runtime value. Nested quote evaluates
+// to a Syntax value holding the remaining quote form.
 func Syntax(f syntax.Form) Value {
 	return Value{k: KindSyntax, p: f}
 }
