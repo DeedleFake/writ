@@ -16,6 +16,9 @@ func init() {
 	runtime.ExportGuestPackage(runtime.Package{
 		Funcs: map[string]runtime.Func{
 			"greet": greet,
+			"mk":    mkBox,
+			"inc":   incBox,
+			"get":   getBox,
 		},
 		Macros: map[string]runtime.Macro{
 			"unless": unless,
@@ -24,6 +27,29 @@ func init() {
 			"version": runtime.Int64(1),
 		},
 	})
+}
+
+type box struct{ n int64 }
+
+func mkBox(args []runtime.Value) (runtime.Value, error) {
+	return runtime.Native(&box{}), nil
+}
+
+func incBox(args []runtime.Value) (runtime.Value, error) {
+	var b *box
+	if len(args) < 1 || !args[0].As(&b) || b == nil {
+		return runtime.Nil, runtime.ErrorMsg("want box")
+	}
+	b.n++
+	return args[0], nil
+}
+
+func getBox(args []runtime.Value) (runtime.Value, error) {
+	var b *box
+	if len(args) < 1 || !args[0].As(&b) || b == nil {
+		return runtime.Nil, runtime.ErrorMsg("want box")
+	}
+	return runtime.Int64(b.n), nil
 }
 
 func greet(args []runtime.Value) (runtime.Value, error) {

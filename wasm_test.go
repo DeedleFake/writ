@@ -155,3 +155,20 @@ func TestRegisterPackageMacro(t *testing.T) {
 		t.Fatalf("native macro: %v", v)
 	}
 }
+
+func TestWasmOpaqueBox(t *testing.T) {
+	wasm := buildWasmHello(t)
+	rt := New(WithAllowAbsoluteImports())
+	src := `(let [m: (import "` + filepath.ToSlash(wasm) + `")]
+  (let [c: (m.mk)]
+    (m.inc c)
+    (m.inc c)
+    (m.get c)))`
+	v, err := rt.Eval(rd(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(2)) {
+		t.Fatalf("box: %v", v)
+	}
+}

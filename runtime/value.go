@@ -600,6 +600,12 @@ func printNative(p any) string {
 	if p == nil {
 		return "#<native nil>"
 	}
+	if wh, ok := p.(*wireHandle); ok {
+		if isGuestHandleID(wh.id) {
+			return "#<handle guest>"
+		}
+		return "#<handle host>"
+	}
 	return "#<native " + reflect.TypeOf(p).String() + ">"
 }
 

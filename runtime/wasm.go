@@ -79,11 +79,27 @@ func loadWasmBytes(data []byte) (Package, error) {
 }
 
 type wasmInst struct {
-	mu      sync.Mutex
-	ctx     context.Context
-	r       wazero.Runtime
-	mod     api.Module
-	handles *HandleTable
+	mu           sync.Mutex
+	ctx          context.Context
+	r            wazero.Runtime
+	mod          api.Module
+	handles      *HandleTable
+	guestProxies map[uint64]Value
+}
+
+func (w *wasmInst) foreignGuestHandle(id uint64) Value {
+	if !isGuestHandleID(id) {
+		return Value{}
+	}
+	if w.guestProxies == nil {
+		w.guestProxies = map[uint64]Value{}
+	}
+	if v, ok := w.guestProxies[id]; ok {
+		return v
+	}
+	v := WireHandle(id)
+	w.guestProxies[id] = v
+	return v
 }
 
 func (w *wasmInst) checkABI() error {
@@ -135,7 +151,7 @@ func (w *wasmInst) readPackage() (Package, error) {
 		}
 		return Package{}, errMsg(msg)
 	}
-	pkg, err := DecodePackageTable(r, w.handles)
+	pkg, err := DecodePackageTableForeign(r, w.handles, w.foreignGuestHandle)
 	if err != nil {
 		return Package{}, err
 	}
@@ -286,7 +302,7 @@ func (w *wasmInst) decodeResult(ptr int32) (Value, error) {
 		}
 		return Value{}, errMsg(msg)
 	}
-	return DecodeReader(r, w.handles)
+	return DecodeReaderForeign(r, w.handles, w.foreignGuestHandle)
 }
 
 func (w *wasmInst) memReader(ptr int32) io.Reader {
@@ -312,7 +328,7 @@ func (w *wasmInst) hostApply(ctx context.Context, mod api.Module, handle int64, 
 	if err != nil {
 		return write(EncodeABIError(err.Error()))
 	}
-	argsVal, err := Decode(raw, w.handles)
+	argsVal, err := DecodeForeign(raw, w.handles, w.foreignGuestHandle)
 	if err != nil {
 		return write(EncodeABIError(err.Error()))
 	}

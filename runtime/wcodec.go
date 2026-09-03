@@ -40,17 +40,50 @@ const (
 	callKindMacro int32 = 1
 )
 
-// HandleTable interns Values for WASM host/guest exchange.
-// IDs start at 1.
-type HandleTable struct {
-	mu   sync.Mutex
-	next uint64
-	vals map[uint64]Value
+// guestHandleBit marks handle ids allocated by a WASM guest.
+// Host ids keep the bit clear so the two tables share one tagHandle
+// wire format without colliding.
+const guestHandleBit uint64 = 1 << 63
+
+func isGuestHandleID(id uint64) bool { return id&guestHandleBit != 0 }
+
+// wireHandle is a peer-owned opaque id carried as KindNative.
+// Guest ids have guestHandleBit set; host ids do not.
+type wireHandle struct{ id uint64 }
+
+// WireHandle boxes a peer handle id as a Native value.
+func WireHandle(id uint64) Value {
+	return Native(&wireHandle{id: id})
 }
 
-// NewHandleTable returns an empty table.
+func wireHandleID(v Value) (uint64, bool) {
+	if v.k != KindNative {
+		return 0, false
+	}
+	wh, ok := v.p.(*wireHandle)
+	if !ok || wh == nil {
+		return 0, false
+	}
+	return wh.id, true
+}
+
+// HandleTable interns Values for WASM host/guest exchange.
+// Host tables allocate ids from 1 upward. Guest tables set guestHandleBit.
+type HandleTable struct {
+	mu    sync.Mutex
+	next  uint64
+	guest bool
+	vals  map[uint64]Value
+}
+
+// NewHandleTable returns an empty host-side table.
 func NewHandleTable() *HandleTable {
 	return &HandleTable{next: 1, vals: map[uint64]Value{}}
+}
+
+// NewGuestHandleTable returns a table whose Put ids have guestHandleBit set.
+func NewGuestHandleTable() *HandleTable {
+	return &HandleTable{next: 1, guest: true, vals: map[uint64]Value{}}
 }
 
 // Put stores v and returns its handle id.
@@ -68,6 +101,9 @@ func (t *HandleTable) Put(v Value) uint64 {
 	}
 	id := t.next
 	t.next++
+	if t.guest {
+		id |= guestHandleBit
+	}
 	t.vals[id] = v
 	return id
 }
@@ -104,12 +140,23 @@ func Encode(v Value, ht *HandleTable) ([]byte, error) {
 
 // Decode reads one value from b.
 func Decode(b []byte, ht *HandleTable) (Value, error) {
-	return DecodeReader(newByteReader(b), ht)
+	return DecodeForeign(b, ht, nil)
+}
+
+// DecodeForeign reads one value from b. Missing handle ids are resolved
+// with foreign when non-nil (peer-owned opaques).
+func DecodeForeign(b []byte, ht *HandleTable, foreign func(uint64) Value) (Value, error) {
+	return DecodeReaderForeign(newByteReader(b), ht, foreign)
 }
 
 // DecodeReader reads one value from r.
 func DecodeReader(r io.Reader, ht *HandleTable) (Value, error) {
-	d := dec{r: r}
+	return DecodeReaderForeign(r, ht, nil)
+}
+
+// DecodeReaderForeign is DecodeReader with a foreign-handle resolver.
+func DecodeReaderForeign(r io.Reader, ht *HandleTable, foreign func(uint64) Value) (Value, error) {
+	d := dec{r: r, foreign: foreign}
 	return d.value(ht)
 }
 
@@ -209,6 +256,11 @@ func (e *enc) value(v Value, ht *HandleTable) error {
 		}
 		return e.form(f)
 	case KindFn, KindMacro, KindNative:
+		if id, ok := wireHandleID(v); ok {
+			e.u8(tagHandle)
+			e.u64(id)
+			return nil
+		}
 		if ht == nil {
 			return errMsg("handle table required")
 		}
@@ -221,7 +273,8 @@ func (e *enc) value(v Value, ht *HandleTable) error {
 }
 
 type dec struct {
-	r io.Reader
+	r       io.Reader
+	foreign func(uint64) Value
 }
 
 func (d *dec) u8() (byte, error) {
@@ -411,11 +464,15 @@ func (d *dec) value(ht *HandleTable) (Value, error) {
 		if err != nil {
 			return Value{}, err
 		}
-		v, ok := ht.Get(id)
-		if !ok {
-			return Value{}, errf("missing handle %d", id)
+		if v, ok := ht.Get(id); ok {
+			return v, nil
 		}
-		return v, nil
+		if d.foreign != nil {
+			if v := d.foreign(id); v.k != KindInvalid {
+				return v, nil
+			}
+		}
+		return Value{}, errf("missing handle %d", id)
 	default:
 		return Value{}, errf("unknown value tag %d", tag)
 	}
@@ -508,7 +565,12 @@ func EncodePackageTable(p Package, ht *HandleTable) ([]byte, error) {
 // DecodePackageTable reads a WASM package export table.
 // Func and macro bodies are not included; the host binds them to writ_call.
 func DecodePackageTable(r io.Reader, ht *HandleTable) (Package, error) {
-	d := dec{r: r}
+	return DecodePackageTableForeign(r, ht, nil)
+}
+
+// DecodePackageTableForeign is DecodePackageTable with a foreign-handle resolver.
+func DecodePackageTableForeign(r io.Reader, ht *HandleTable, foreign func(uint64) Value) (Package, error) {
+	d := dec{r: r, foreign: foreign}
 	n, err := d.u32()
 	if err != nil {
 		return Package{}, err
