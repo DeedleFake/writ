@@ -482,30 +482,8 @@ func (v Value) Form() (syntax.Form, bool) {
 	return f, true
 }
 
-// As type-asserts a native value into dst, which must be a non-nil *T.
-func (v Value) As(dst any) bool {
-	if v.k != KindNative || dst == nil {
-		return false
-	}
-	dp := reflect.ValueOf(dst)
-	if dp.Kind() != reflect.Pointer || dp.IsNil() {
-		return false
-	}
-	elem := dp.Elem()
-	if !elem.CanSet() {
-		return false
-	}
-	sv := reflect.ValueOf(v.p)
-	if !sv.IsValid() || !sv.Type().AssignableTo(elem.Type()) {
-		return false
-	}
-	elem.Set(sv)
-	return true
-}
-
-// AsType type-asserts a KindNative value to T.
-// Prefer it over [Value.As] when T is known at compile time.
-func (v Value) AsType[T any]() (val T, ok bool) {
+// As type-asserts a KindNative value to T.
+func (v Value) As[T any]() (val T, ok bool) {
 	if v.k != KindNative {
 		return val, false
 	}

@@ -112,36 +112,18 @@ func TestNativeEqualPrintAs(t *testing.T) {
 	if !strings.Contains(s, "#<native") {
 		t.Fatalf("print: %q", s)
 	}
-	var got *nativeEqBox
-	if !a.As(&got) || got != p.(*nativeEqBox) {
+	got, ok := a.As[*nativeEqBox]()
+	if !ok || got != p.(*nativeEqBox) {
 		t.Fatal("As identity")
 	}
-	var wrong int
-	if a.As(&wrong) {
+	if _, ok := a.As[int](); ok {
 		t.Fatal("As wrong type")
-	}
-	if a.As(nil) {
-		t.Fatal("As nil dst")
-	}
-	if a.As(0) {
-		t.Fatal("As non-pointer dst")
 	}
 	if _, ok := Int64(1).Native(); ok {
 		t.Fatal("Native() on non-native")
 	}
-	if Int64(1).As(&got) {
+	if _, ok := Int64(1).As[*nativeEqBox](); ok {
 		t.Fatal("As on non-native")
-	}
-
-	got2, ok := a.AsType[*nativeEqBox]()
-	if !ok || got2 != p.(*nativeEqBox) {
-		t.Fatal("AsType identity")
-	}
-	if _, ok := a.AsType[int](); ok {
-		t.Fatal("AsType wrong type")
-	}
-	if _, ok := Int64(1).AsType[*nativeEqBox](); ok {
-		t.Fatal("AsType on non-native")
 	}
 	func() {
 		defer func() {
@@ -153,8 +135,8 @@ func TestNativeEqualPrintAs(t *testing.T) {
 	}()
 	var typedNil *nativeEqBox
 	tn := Native(typedNil)
-	gotNil, ok := tn.AsType[*nativeEqBox]()
+	gotNil, ok := tn.As[*nativeEqBox]()
 	if !ok || gotNil != nil {
-		t.Fatal("AsType typed nil")
+		t.Fatal("As typed nil")
 	}
 }

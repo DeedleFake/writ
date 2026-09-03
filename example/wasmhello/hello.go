@@ -36,8 +36,11 @@ func mkBox(args []runtime.Value) (runtime.Value, error) {
 }
 
 func incBox(args []runtime.Value) (runtime.Value, error) {
-	var b *box
-	if len(args) < 1 || !args[0].As(&b) || b == nil {
+	if len(args) < 1 {
+		return runtime.Nil, runtime.ErrorMsg("want box")
+	}
+	b, ok := args[0].As[*box]()
+	if !ok || b == nil {
 		return runtime.Nil, runtime.ErrorMsg("want box")
 	}
 	b.n++
@@ -45,8 +48,11 @@ func incBox(args []runtime.Value) (runtime.Value, error) {
 }
 
 func getBox(args []runtime.Value) (runtime.Value, error) {
-	var b *box
-	if len(args) < 1 || !args[0].As(&b) || b == nil {
+	if len(args) < 1 {
+		return runtime.Nil, runtime.ErrorMsg("want box")
+	}
+	b, ok := args[0].As[*box]()
+	if !ok || b == nil {
 		return runtime.Nil, runtime.ErrorMsg("want box")
 	}
 	return runtime.Int64(b.n), nil

@@ -49,8 +49,8 @@ func TestGuestNativeHandleRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var got *box
-	if !back.As(&got) || got == nil || got.n != 7 {
+	got, ok := back.As[*box]()
+	if !ok || got == nil || got.n != 7 {
 		t.Fatalf("identity lost: %#v", back)
 	}
 	raw, ok := orig.Native()
