@@ -25,10 +25,6 @@ const (
 	KindMap
 	KindFn
 	KindMacro
-	KindQuote
-	KindUnquote
-	KindSplice
-	KindComment
 	KindNative
 )
 
@@ -50,14 +46,6 @@ func (k Kind) String() string {
 		return "fn"
 	case KindMacro:
 		return "macro"
-	case KindQuote:
-		return "quote"
-	case KindUnquote:
-		return "unquote"
-	case KindSplice:
-		return "splice"
-	case KindComment:
-		return "comment"
 	case KindNative:
 		return "native"
 	default:
@@ -77,13 +65,13 @@ type MapPair struct {
 	Value Value
 }
 
-// Value is a Writ value or source form.
+// Value is a Writ runtime value.
 type Value struct {
 	k   Kind
 	n   int64 // small int, or float64 bits
 	s   string
 	h   unique.Handle[string]
-	p   any      // list, map, fn, quote-inner, *big.Int, native
+	p   any      // list, map, fn, *big.Int, native
 	src *srcInfo // nil for synthetic values
 }
 
@@ -113,6 +101,7 @@ type fnVal struct {
 	keys    []string
 	env     *env
 	native  Func
+	macro   Macro
 	name    string
 }
 
@@ -126,21 +115,6 @@ var (
 
 func internSym(name string) Value {
 	return Value{k: KindSymbol, h: unique.Make(name)}
-}
-
-func (v Value) withSymName(name string) Value {
-	n := internSym(name)
-	if v.src != nil {
-		n.src = &srcInfo{
-			span:    v.src.span,
-			hasSpan: v.src.hasSpan,
-			cmt:     v.src.cmt,
-			blank:   v.src.blank,
-			broke:   v.src.broke,
-			lex:     v.src.lex,
-		}
-	}
-	return n
 }
 
 func (v Value) cloneSrc() *srcInfo {
@@ -166,23 +140,6 @@ func (v Value) fnData() *fnVal {
 	return f
 }
 
-func (v Value) isWrap() bool {
-	switch v.k {
-	case KindQuote, KindUnquote, KindSplice:
-		return true
-	default:
-		return false
-	}
-}
-
-func (v Value) innerPtr() *Value {
-	if !v.isWrap() {
-		return nil
-	}
-	in, _ := v.p.(*Value)
-	return in
-}
-
 func (v Value) bigInt() *big.Int {
 	b, _ := v.p.(*big.Int)
 	return b
@@ -190,27 +147,6 @@ func (v Value) bigInt() *big.Int {
 
 func (v Value) floatVal() float64 {
 	return math.Float64frombits(uint64(v.n))
-}
-
-func (v Value) srcSpan() Span {
-	if v.src == nil {
-		return Span{}
-	}
-	return v.src.span
-}
-
-func (v Value) withItems(xs []Value) Value {
-	vec := false
-	if ld := v.list(); ld != nil {
-		vec = ld.vec
-	}
-	v.p = &listData{xs: xs, vec: vec}
-	return v
-}
-
-func (v Value) withMap(m *mapData) Value {
-	v.p = m
-	return v
 }
 
 func listVal(xs []Value, vec bool) Value {
@@ -281,24 +217,6 @@ func List(xs ...Value) Value {
 // CallList returns a call-shaped list (parentheses).
 func CallList(xs ...Value) Value {
 	return listVal(xs, false)
-}
-
-// Quote wraps v.
-func Quote(v Value) Value {
-	inner := v
-	return Value{k: KindQuote, p: &inner}
-}
-
-// Unquote wraps v.
-func Unquote(v Value) Value {
-	inner := v
-	return Value{k: KindUnquote, p: &inner}
-}
-
-// Splice wraps v.
-func Splice(v Value) Value {
-	inner := v
-	return Value{k: KindSplice, p: &inner}
 }
 
 // Native boxes a host object. Native values are opaque to Writ.
@@ -402,23 +320,6 @@ func (v Value) withCmt(cmt string) Value {
 	s := v.cloneSrc()
 	s.cmt = cmt
 	v.src = s
-	return v
-}
-
-func (v Value) innerVal() Value {
-	in := v.innerPtr()
-	if in == nil {
-		return Nil
-	}
-	return *in
-}
-
-func (v Value) setInner(in Value) Value {
-	if !v.isWrap() {
-		return v
-	}
-	cp := in
-	v.p = &cp
 	return v
 }
 
@@ -588,13 +489,6 @@ func (v Value) As(dst any) bool {
 	return true
 }
 
-func (v Value) commentText() string {
-	if v.k != KindComment {
-		return ""
-	}
-	return v.s
-}
-
 func (v Value) isKeySym() bool {
 	if v.k != KindSymbol {
 		return false
@@ -611,22 +505,8 @@ func (v Value) keyName() string {
 	return s[:len(s)-1]
 }
 
-func reservedLit(v Value) bool {
-	return v.IsTrue() || v.IsFalse() || v.IsNil()
-}
-
 func isSymName(v Value, name string) bool {
 	return v.k == KindSymbol && v.h == unique.Make(name)
-}
-
-func filterComments(xs []Value) []Value {
-	out := make([]Value, 0, len(xs))
-	for _, x := range xs {
-		if x.k != KindComment {
-			out = append(out, x)
-		}
-	}
-	return out
 }
 
 func intFromString(s string) (Value, bool) {
@@ -765,14 +645,6 @@ func printVal(v Value) string {
 		}
 		b.WriteByte(']')
 		return b.String()
-	case KindComment:
-		return v.s
-	case KindQuote:
-		return "'" + printVal(v.innerVal())
-	case KindUnquote:
-		return "," + printVal(v.innerVal())
-	case KindSplice:
-		return "@" + printVal(v.innerVal())
 	default:
 		return "#<invalid>"
 	}
@@ -795,7 +667,7 @@ func (v Value) Equal(o Value) bool {
 		return v.asBig().Cmp(o.asBig()) == 0
 	case KindFloat:
 		return v.floatVal() == o.floatVal()
-	case KindString, KindComment:
+	case KindString:
 		return v.s == o.s
 	case KindSymbol:
 		return v.h == o.h
@@ -803,8 +675,6 @@ func (v Value) Equal(o Value) bool {
 		return false
 	case KindNative:
 		return nativeEqual(v.p, o.p)
-	case KindQuote, KindUnquote, KindSplice:
-		return v.innerVal().Equal(o.innerVal())
 	case KindList:
 		xs, ys := v.Items(), o.Items()
 		if len(xs) != len(ys) {
@@ -840,11 +710,6 @@ func intFloatEqual(i Value, f float64) bool {
 	bf := new(big.Float).SetInt(i.asBig())
 	ff := new(big.Float).SetFloat64(f)
 	return bf.Cmp(ff) == 0
-}
-
-// Comment returns a comment form. text is the source including ';'.
-func Comment(text string) Value {
-	return Value{k: KindComment, s: text}
 }
 
 // WithSpan returns a copy of v with a source span.
@@ -897,12 +762,6 @@ func (v Value) WithKeySpans(spans map[string]Span) Value {
 	return v
 }
 
-// Inner returns the wrapped value of quote, unquote, or splice.
-func (v Value) Inner() Value { return v.innerVal() }
-
-// SetInner returns a copy of v wrapping in.
-func (v Value) SetInner(in Value) Value { return v.setInner(in) }
-
 // IsKey reports whether v is a keyword symbol (name:).
 func (v Value) IsKey() bool { return v.isKeySym() }
 
@@ -917,9 +776,6 @@ func (v Value) TrailingComment() string {
 	return v.src.cmt
 }
 
-// CommentText is the comment form body, including ';'.
-func (v Value) CommentText() string { return v.commentText() }
-
 // Blank reports whether a blank line preceded v.
 func (v Value) Blank() bool { return v.src != nil && v.src.blank }
 
@@ -933,9 +789,6 @@ func (v Value) KeySpans() map[string]Span {
 	}
 	return v.src.keySpans
 }
-
-// FilterComments drops comment forms.
-func FilterComments(xs []Value) []Value { return filterComments(xs) }
 
 // IsName reports whether v is the symbol name.
 func IsName(v Value, name string) bool { return isSymName(v, name) }

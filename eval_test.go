@@ -270,6 +270,17 @@ func TestEvalQuoteEval(t *testing.T) {
 		t.Fatalf("splice: %v", v)
 	}
 	evalErr(t, ",x")
+	v = evals(t, "''x")
+	if v.Kind() != runtime.KindList || v.IsVec() || len(v.Items()) != 2 {
+		t.Fatalf("nested quote shape: %v", v)
+	}
+	if v.Items()[0].Name() != "quote" || !v.Items()[1].Equal(runtime.Symbol("x")) {
+		t.Fatalf("nested quote: %v", v)
+	}
+	v = evals(t, "(eval ''x)")
+	if !v.Equal(runtime.Symbol("x")) {
+		t.Fatalf("eval nested quote: %v", v)
+	}
 }
 
 func TestEvalMacros(t *testing.T) {

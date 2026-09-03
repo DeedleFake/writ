@@ -13,6 +13,7 @@ import (
 	"deedles.dev/writ"
 	"deedles.dev/writ/parser"
 	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/syntax"
 )
 
 const (
@@ -121,9 +122,9 @@ func (r REPL) Run(ctx context.Context) error {
 	}
 }
 
-func skipResult(forms []runtime.Value) bool {
+func skipResult(forms []syntax.Form) bool {
 	for _, f := range forms {
-		if f.Kind() != runtime.KindComment {
+		if f.Kind() != syntax.KindComment {
 			return false
 		}
 	}

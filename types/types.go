@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/syntax"
 )
 
 type typeKind int
@@ -1044,9 +1045,6 @@ func kindOf(v runtime.Value) Type {
 		if v.IsVec() {
 			var items []Type
 			for _, x := range v.Items() {
-				if x.Kind() == runtime.KindComment {
-					continue
-				}
 				items = append(items, kindOf(x))
 			}
 			if len(items) == 0 {
@@ -1077,32 +1075,71 @@ func kindOf(v runtime.Value) Type {
 			return nativeOf(nil)
 		}
 		return nativeOf(reflect.TypeOf(nv))
-	case runtime.KindComment:
-		return NilType()
-	case runtime.KindQuote:
-		return kindOf(v.Inner())
 	default:
 		return Any()
 	}
 }
 
-func collectAliases(v runtime.Value, into map[string]string) {
+func collectAliases(v syntax.Form, into map[string]string) {
 	switch v.Kind() {
-	case runtime.KindQuote, runtime.KindUnquote, runtime.KindSplice:
+	case syntax.KindQuote, syntax.KindUnquote, syntax.KindSplice:
 		collectAliases(v.Inner(), into)
-	case runtime.KindMap:
+	case syntax.KindMap:
 		for _, pair := range v.Pairs() {
 			val := pair.Value
-			if val.Kind() == runtime.KindSymbol && val.Name() != "true" && val.Name() != "false" && val.Name() != "nil" {
+			if val.Kind() == syntax.KindSymbol && val.Name() != "true" && val.Name() != "false" && val.Name() != "nil" {
 				into[pair.Key.Name()] = val.Name()
 			} else {
 				collectAliases(val, into)
 			}
 		}
-	case runtime.KindList:
+	case syntax.KindList:
 		for _, x := range v.Items() {
 			collectAliases(x, into)
 		}
+	}
+}
+
+func kindOfForm(v syntax.Form) Type {
+	switch v.Kind() {
+	case syntax.KindInt:
+		return IntType()
+	case syntax.KindFloat:
+		return FloatType()
+	case syntax.KindString:
+		return ExactString(v.Text())
+	case syntax.KindSymbol:
+		return ExactSymbol(v.Name())
+	case syntax.KindList:
+		if v.IsVec() {
+			var items []Type
+			for _, x := range v.Items() {
+				if x.Kind() == syntax.KindComment {
+					continue
+				}
+				items = append(items, kindOfForm(x))
+			}
+			if len(items) == 0 {
+				return EmptyList()
+			}
+			return tTuple(items)
+		}
+		return Any()
+	case syntax.KindMap:
+		if len(v.Pairs()) == 0 {
+			return EmptyMapType()
+		}
+		var fields []mapField
+		for _, pair := range v.Pairs() {
+			fields = append(fields, mapField{name: pair.Key.Name(), t: kindOfForm(pair.Value)})
+		}
+		return tMap(fields, nil)
+	case syntax.KindComment:
+		return NilType()
+	case syntax.KindQuote:
+		return kindOfForm(v.Inner())
+	default:
+		return Any()
 	}
 }
 
