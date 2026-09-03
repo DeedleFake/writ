@@ -18,9 +18,15 @@ func stampVal(v Value, f syntax.Form) Value {
 	return v
 }
 
-// FormFromValue embeds a runtime value into a source form. KindSyntax
-// unwraps to its form. Functions, macros, and native values cannot be
-// represented as forms; they become an invalid form.
+// FormFromValue builds a source form with the same shape as v.
+//
+// It is for re-entering the Form path (for example the eval builtin), not a
+// true inverse of evaluation. Numbers and strings are self-evaluating, so
+// those Forms evaluate back to v. A symbol value becomes a symbol Form, which
+// looks up that name rather than yielding the symbol; wrap with
+// [syntax.Quote] when the Form must evaluate to the value itself. KindSyntax
+// unwraps to its boxed form. Functions, macros, and native values cannot be
+// represented and become an invalid form.
 func FormFromValue(v Value) syntax.Form {
 	return stampForm(formFromValue(v), v)
 }
