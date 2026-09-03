@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/syntax"
 )
 
 func formatSrc(src string) (string, error) {
@@ -15,46 +15,46 @@ func formatSrc(src string) (string, error) {
 	return buf.String(), err
 }
 
-func stripComments(v runtime.Value) runtime.Value {
+func stripComments(v syntax.Form) syntax.Form {
 	switch v.Kind() {
-	case runtime.KindComment:
-		return runtime.Nil
-	case runtime.KindQuote:
-		return runtime.Quote(stripComments(v.Inner()))
-	case runtime.KindUnquote:
-		return runtime.Unquote(stripComments(v.Inner()))
-	case runtime.KindSplice:
-		return runtime.Splice(stripComments(v.Inner()))
-	case runtime.KindList:
-		var xs []runtime.Value
+	case syntax.KindComment:
+		return syntax.Nil
+	case syntax.KindQuote:
+		return syntax.Quote(stripComments(v.Inner()))
+	case syntax.KindUnquote:
+		return syntax.Unquote(stripComments(v.Inner()))
+	case syntax.KindSplice:
+		return syntax.Splice(stripComments(v.Inner()))
+	case syntax.KindList:
+		var xs []syntax.Form
 		for _, x := range v.Items() {
-			if x.Kind() == runtime.KindComment {
+			if x.Kind() == syntax.KindComment {
 				continue
 			}
 			xs = append(xs, stripComments(x))
 		}
 		if v.IsVec() {
-			return runtime.List(xs...)
+			return syntax.List(xs...)
 		}
-		return runtime.CallList(xs...)
-	case runtime.KindMap:
-		var pairs []runtime.MapPair
+		return syntax.CallList(xs...)
+	case syntax.KindMap:
+		var pairs []syntax.MapPair
 		for _, p := range v.Pairs() {
-			pairs = append(pairs, runtime.MapPair{Key: p.Key, Value: stripComments(p.Value)})
+			pairs = append(pairs, syntax.MapPair{Key: p.Key, Value: stripComments(p.Value)})
 		}
-		return runtime.MapFrom(pairs...)
+		return syntax.MapFrom(pairs...)
 	default:
 		return v.WithComment("")
 	}
 }
 
-func formEq(a, b runtime.Value) bool {
+func formEq(a, b syntax.Form) bool {
 	a, b = stripComments(a), stripComments(b)
 	if a.Kind() != b.Kind() || a.IsVec() != b.IsVec() {
 		return false
 	}
 	switch a.Kind() {
-	case runtime.KindList:
+	case syntax.KindList:
 		as, bs := a.Items(), b.Items()
 		if len(as) != len(bs) {
 			return false
@@ -65,7 +65,7 @@ func formEq(a, b runtime.Value) bool {
 			}
 		}
 		return true
-	case runtime.KindMap:
+	case syntax.KindMap:
 		ap, bp := a.Pairs(), b.Pairs()
 		if len(ap) != len(bp) {
 			return false
@@ -78,7 +78,7 @@ func formEq(a, b runtime.Value) bool {
 			_ = bp[i]
 		}
 		return true
-	case runtime.KindQuote, runtime.KindUnquote, runtime.KindSplice:
+	case syntax.KindQuote, syntax.KindUnquote, syntax.KindSplice:
 		return formEq(a.Inner(), b.Inner())
 	default:
 		return a.Equal(b)

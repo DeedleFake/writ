@@ -133,23 +133,4 @@ func TestNativeEqualPrintAs(t *testing.T) {
 		t.Fatal("As on non-native")
 	}
 
-	boxed := Native(&nativeEqBox{n: 3})
-	if boxed.Inner() != Nil {
-		t.Fatal("Inner on native")
-	}
-	out := boxed.SetInner(Int64(1))
-	if !out.Equal(boxed) || out.Kind() != KindNative {
-		t.Fatal("SetInner on native")
-	}
-	var h *nativeEqBox
-	if !out.As(&h) || h.n != 3 {
-		t.Fatal("SetInner must not drop native payload")
-	}
-	q := Quote(Int64(1))
-	if !q.Inner().Equal(Int64(1)) {
-		t.Fatal("Inner on quote")
-	}
-	if !q.SetInner(Int64(2)).Inner().Equal(Int64(2)) {
-		t.Fatal("SetInner on quote")
-	}
 }

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/syntax"
 )
 
 const maxInline = 72
@@ -35,7 +36,7 @@ func Format(r io.Reader, w io.Writer) error {
 		prev := forms[i-1]
 		form := forms[i]
 		sep := "\n"
-		if prev.Kind() == runtime.KindComment {
+		if prev.Kind() == syntax.KindComment {
 			sep = "\n"
 		} else if form.Blank() {
 			sep = "\n\n"
@@ -46,32 +47,32 @@ func Format(r io.Reader, w io.Writer) error {
 	return err
 }
 
-func fnIsMulti(v runtime.Value) bool {
+func fnIsMulti(v syntax.Form) bool {
 	xs := v.Items()
-	if v.Kind() != runtime.KindList || len(xs) == 0 || xs[0].Kind() != runtime.KindSymbol || xs[0].Name() != "fn" {
+	if v.Kind() != syntax.KindList || len(xs) == 0 || xs[0].Kind() != syntax.KindSymbol || xs[0].Name() != "fn" {
 		return false
 	}
 	kind, clauses, err := runtime.ParseFn(xs[1:])
 	return err == nil && kind == "long" && len(clauses) > 1
 }
 
-func hasBreakComment(v runtime.Value) bool {
+func hasBreakComment(v syntax.Form) bool {
 	switch v.Kind() {
-	case runtime.KindComment:
+	case syntax.KindComment:
 		return true
-	case runtime.KindQuote, runtime.KindUnquote, runtime.KindSplice:
+	case syntax.KindQuote, syntax.KindUnquote, syntax.KindSplice:
 		return v.TrailingComment() != "" || hasBreakComment(v.Inner())
-	case runtime.KindMap:
+	case syntax.KindMap:
 		for _, pair := range v.Pairs() {
 			if pair.Value.TrailingComment() != "" || hasBreakComment(pair.Value) {
 				return true
 			}
 		}
 		return false
-	case runtime.KindList:
+	case syntax.KindList:
 		xs := v.Items()
 		for i, x := range xs {
-			if x.Kind() == runtime.KindComment {
+			if x.Kind() == syntax.KindComment {
 				return true
 			}
 			if x.TrailingComment() != "" && i < len(xs)-1 {
@@ -87,7 +88,7 @@ func hasBreakComment(v runtime.Value) bool {
 	}
 }
 
-func suffixCmt(v runtime.Value, text string) string {
+func suffixCmt(v syntax.Form, text string) string {
 	if v.TrailingComment() != "" {
 		return text + " " + v.TrailingComment()
 	}
@@ -115,23 +116,23 @@ func pushPrefixed(lines *[]string, prefix, text string) {
 	*lines = append(*lines, strings.Split(prefixLines(prefix, text), "\n")...)
 }
 
-func (p *printer) formatVal(v runtime.Value, indent int) string {
-	if v.Kind() == runtime.KindComment {
+func (p *printer) formatVal(v syntax.Form, indent int) string {
+	if v.Kind() == syntax.KindComment {
 		return v.CommentText()
 	}
-	if v.Kind() == runtime.KindQuote || v.Kind() == runtime.KindUnquote || v.Kind() == runtime.KindSplice {
+	if v.Kind() == syntax.KindQuote || v.Kind() == syntax.KindUnquote || v.Kind() == syntax.KindSplice {
 		mark := "'"
-		if v.Kind() == runtime.KindUnquote {
+		if v.Kind() == syntax.KindUnquote {
 			mark = ","
-		} else if v.Kind() == runtime.KindSplice {
+		} else if v.Kind() == syntax.KindSplice {
 			mark = "@"
 		}
 		return suffixCmt(v, prefixLines(mark, p.formatVal(v.Inner(), indent)))
 	}
-	if v.Kind() == runtime.KindMap {
+	if v.Kind() == syntax.KindMap {
 		return p.formatMap(v, indent)
 	}
-	if v.Kind() != runtime.KindList {
+	if v.Kind() != syntax.KindList {
 		return p.formatAtom(v)
 	}
 	if s, ok := p.formatDotted(v); ok {
@@ -157,7 +158,7 @@ func (p *printer) formatVal(v runtime.Value, indent int) string {
 		return suffixCmt(v, p.formatVecBlock(v, indent))
 	}
 	headName := ""
-	if xs[0].Kind() == runtime.KindSymbol {
+	if xs[0].Kind() == syntax.KindSymbol {
 		headName = xs[0].Name()
 	}
 	_, special := bodySpecials[headName]
@@ -186,7 +187,7 @@ func closeOn(lines []string, close string) string {
 	return strings.Join(lines, "\n")
 }
 
-func (p *printer) formatVecBlock(v runtime.Value, indent int) string {
+func (p *printer) formatVecBlock(v syntax.Form, indent int) string {
 	xs := v.Items()
 	if len(xs) == 0 {
 		return "[]"
@@ -199,22 +200,22 @@ func (p *printer) formatVecBlock(v runtime.Value, indent int) string {
 	return closeOn(lines, "]")
 }
 
-func (p *printer) formatMap(v runtime.Value, indent int) string {
+func (p *printer) formatMap(v syntax.Form, indent int) string {
 	pairs := v.Pairs()
 	if len(pairs) == 0 {
 		return suffixCmt(v, "[:]")
 	}
 	parts := make([]string, len(pairs))
 	for i, pair := range pairs {
-		parts[i] = runtime.FormatSymbol(pair.Key.Name()) + ": " + p.formatInline(pair.Value)
+		parts[i] = syntax.FormatSymbol(pair.Key.Name()) + ": " + p.formatInline(pair.Value)
 	}
 	inline := "[" + strings.Join(parts, " ") + "]"
 	col := indent * 2
 	if !hasBreakComment(v) && !v.Broke() && len(inline)+col <= maxInline {
 		return suffixCmt(v, inline)
 	}
-	pairText := func(k runtime.Value, val runtime.Value) string {
-		return prefixLines(runtime.FormatSymbol(k.Name())+": ", p.formatVal(val, indent+1))
+	pairText := func(k syntax.Form, val syntax.Form) string {
+		return prefixLines(syntax.FormatSymbol(k.Name())+": ", p.formatVal(val, indent+1))
 	}
 	var lines []string
 	pushPrefixed(&lines, "[", pairText(pairs[0].Key, pairs[0].Value))
@@ -224,12 +225,12 @@ func (p *printer) formatMap(v runtime.Value, indent int) string {
 	return suffixCmt(v, closeOn(lines, "]"))
 }
 
-func (p *printer) formatBlock(v runtime.Value, indent int) string {
+func (p *printer) formatBlock(v syntax.Form, indent int) string {
 	xs := v.Items()
 	body := "  "
 	head := xs[0]
 	headName := ""
-	if head.Kind() == runtime.KindSymbol {
+	if head.Kind() == syntax.KindSymbol {
 		headName = head.Name()
 	} else {
 		headName = p.formatVal(head, indent)
@@ -259,7 +260,7 @@ func (p *printer) formatBlock(v runtime.Value, indent int) string {
 		i := 1
 		var header strings.Builder
 		header.WriteString("(" + headName)
-		for i < len(xs) && xs[i].Kind() != runtime.KindList {
+		for i < len(xs) && xs[i].Kind() != syntax.KindList {
 			header.WriteString(" " + p.formatAtom(xs[i]))
 			i++
 		}
@@ -407,18 +408,18 @@ func (p *printer) formatBlock(v runtime.Value, indent int) string {
 	if len(args) == 0 {
 		return "(" + headName + ")"
 	}
-	var chunks [][]runtime.Value
+	var chunks [][]syntax.Form
 	for i := 0; i < len(args); {
 		a := args[i]
 		if a.IsKey() && i+1 < len(args) {
-			chunks = append(chunks, []runtime.Value{a, args[i+1]})
+			chunks = append(chunks, []syntax.Form{a, args[i+1]})
 			i += 2
 		} else {
-			chunks = append(chunks, []runtime.Value{a})
+			chunks = append(chunks, []syntax.Form{a})
 			i++
 		}
 	}
-	fmtChunk := func(c []runtime.Value) string {
+	fmtChunk := func(c []syntax.Form) string {
 		if len(c) == 2 && c[0].IsKey() {
 			return prefixLines(c[0].Name()+" ", p.formatVal(c[1], indent+1))
 		}
@@ -440,24 +441,24 @@ func (p *printer) formatBlock(v runtime.Value, indent int) string {
 	return closeOn(lines, ")")
 }
 
-func (p *printer) formatDotted(v runtime.Value) (string, bool) {
-	if v.Kind() != runtime.KindList || v.IsVec() {
+func (p *printer) formatDotted(v syntax.Form) (string, bool) {
+	if v.Kind() != syntax.KindList || v.IsVec() {
 		return "", false
 	}
 	if hasBreakComment(v) {
 		return "", false
 	}
-	xs := runtime.FilterComments(v.Items())
-	if len(xs) < 3 || !runtime.IsName(xs[0], ".") {
+	xs := syntax.FilterComments(v.Items())
+	if len(xs) < 3 || !syntax.IsName(xs[0], ".") {
 		return "", false
 	}
 	for _, k := range xs[2:] {
-		if k.Kind() != runtime.KindSymbol || k.IsKey() || runtime.FormatSymbol(k.Name()) != k.Name() {
+		if k.Kind() != syntax.KindSymbol || k.IsKey() || syntax.FormatSymbol(k.Name()) != k.Name() {
 			return "", false
 		}
 	}
 	var left string
-	if xs[1].Kind() == runtime.KindSymbol && !xs[1].IsKey() && runtime.FormatSymbol(xs[1].Name()) == xs[1].Name() {
+	if xs[1].Kind() == syntax.KindSymbol && !xs[1].IsKey() && syntax.FormatSymbol(xs[1].Name()) == xs[1].Name() {
 		left = xs[1].Name()
 	} else if s, ok := p.formatDotted(xs[1]); ok {
 		left = s
@@ -470,20 +471,20 @@ func (p *printer) formatDotted(v runtime.Value) (string, bool) {
 	return suffixCmt(v, left), true
 }
 
-func (p *printer) formatInline(v runtime.Value) string {
+func (p *printer) formatInline(v syntax.Form) string {
 	if s, ok := p.formatDotted(v); ok {
 		return s
 	}
-	if v.Kind() == runtime.KindQuote || v.Kind() == runtime.KindUnquote || v.Kind() == runtime.KindSplice {
+	if v.Kind() == syntax.KindQuote || v.Kind() == syntax.KindUnquote || v.Kind() == syntax.KindSplice {
 		mark := "'"
-		if v.Kind() == runtime.KindUnquote {
+		if v.Kind() == syntax.KindUnquote {
 			mark = ","
-		} else if v.Kind() == runtime.KindSplice {
+		} else if v.Kind() == syntax.KindSplice {
 			mark = "@"
 		}
 		return mark + p.formatInline(v.Inner())
 	}
-	if v.Kind() != runtime.KindList {
+	if v.Kind() != syntax.KindList {
 		return p.formatAtom(v)
 	}
 	xs := v.Items()
@@ -510,77 +511,71 @@ func (p *printer) formatInline(v runtime.Value) string {
 	return suffixCmt(v, text)
 }
 
-func (p *printer) formatCore(v runtime.Value) string {
+func (p *printer) formatCore(v syntax.Form) string {
 	if s, ok := p.formatDotted(v); ok {
 		return s
 	}
-	if v.Kind() == runtime.KindComment {
+	if v.Kind() == syntax.KindComment {
 		return v.CommentText()
 	}
-	if v.Kind() == runtime.KindQuote || v.Kind() == runtime.KindUnquote || v.Kind() == runtime.KindSplice {
+	if v.Kind() == syntax.KindQuote || v.Kind() == syntax.KindUnquote || v.Kind() == syntax.KindSplice {
 		mark := "'"
-		if v.Kind() == runtime.KindUnquote {
+		if v.Kind() == syntax.KindUnquote {
 			mark = ","
-		} else if v.Kind() == runtime.KindSplice {
+		} else if v.Kind() == syntax.KindSplice {
 			mark = "@"
 		}
 		return mark + p.formatCore(v.Inner())
 	}
-	if v.Kind() == runtime.KindList {
+	if v.Kind() == syntax.KindList {
 		return p.formatInline(v)
 	}
-	if v.Kind() == runtime.KindMap {
+	if v.Kind() == syntax.KindMap {
 		return p.formatMap(v, 0)
 	}
 	return p.formatAtomCore(v)
 }
 
-func (p *printer) formatAtomCore(v runtime.Value) string {
+func (p *printer) formatAtomCore(v syntax.Form) string {
 	switch v.Kind() {
-	case runtime.KindInt:
+	case syntax.KindInt:
 		if s := v.Lexeme(); s != "" {
 			return s
 		}
 		return v.String()
-	case runtime.KindFloat:
+	case syntax.KindFloat:
 		if s := v.Lexeme(); s != "" {
 			return s
 		}
 		return v.String()
-	case runtime.KindString:
+	case syntax.KindString:
 		b, _ := json.Marshal(v.Text())
 		return string(b)
-	case runtime.KindSymbol:
+	case syntax.KindSymbol:
 		if s := v.Lexeme(); s != "" {
 			return s
 		}
 		if v.IsTrue() || v.IsFalse() || v.IsNil() {
 			return v.Name()
 		}
-		return runtime.FormatSymbol(v.Name())
-	case runtime.KindFn:
-		return "#<fn>"
-	case runtime.KindMacro:
-		return "#<macro>"
-	case runtime.KindNative:
-		return runtime.Print(v)
-	case runtime.KindComment:
+		return syntax.FormatSymbol(v.Name())
+	case syntax.KindComment:
 		return v.CommentText()
-	case runtime.KindList:
+	case syntax.KindList:
 		return p.formatInline(v)
-	case runtime.KindMap:
+	case syntax.KindMap:
 		return p.formatMap(v, 0)
-	case runtime.KindQuote:
+	case syntax.KindQuote:
 		return "'" + p.formatAtomCore(v.Inner())
-	case runtime.KindUnquote:
+	case syntax.KindUnquote:
 		return "," + p.formatAtomCore(v.Inner())
-	case runtime.KindSplice:
+	case syntax.KindSplice:
 		return "@" + p.formatAtomCore(v.Inner())
 	default:
-		return runtime.Print(v)
+		return syntax.Print(v)
 	}
 }
 
-func (p *printer) formatAtom(v runtime.Value) string {
+func (p *printer) formatAtom(v syntax.Form) string {
 	return suffixCmt(v, p.formatAtomCore(v))
 }

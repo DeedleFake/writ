@@ -2,7 +2,11 @@
 
 package runtime
 
-import "unsafe"
+import (
+	"unsafe"
+
+	"deedles.dev/writ/syntax"
+)
 
 var (
 	guestPkg    Package
@@ -15,23 +19,20 @@ func ExportGuestPackage(p Package) {
 	guestPkg = p
 }
 
-func dispatchGuestCall(kind int32, name string, args []Value) (Value, error) {
-	switch kind {
-	case callKindFunc:
-		f, ok := guestPkg.Funcs[name]
-		if !ok || f == nil {
-			return Value{}, errf("unknown func %s", name)
-		}
-		return f(args)
-	case callKindMacro:
-		f, ok := guestPkg.Macros[name]
-		if !ok || f == nil {
-			return Value{}, errf("unknown macro %s", name)
-		}
-		return f(args)
-	default:
-		return Value{}, errf("unknown call kind %d", kind)
+func dispatchGuestFunc(name string, args []Value) (Value, error) {
+	f, ok := guestPkg.Funcs[name]
+	if !ok || f == nil {
+		return Value{}, errf("unknown func %s", name)
 	}
+	return f(args)
+}
+
+func dispatchGuestMacro(name string, args []syntax.Form) (syntax.Form, error) {
+	f, ok := guestPkg.Macros[name]
+	if !ok || f == nil {
+		return syntax.Form{}, errf("unknown macro %s", name)
+	}
+	return f(args)
 }
 
 //go:wasmexport writ_abi
@@ -64,6 +65,24 @@ func guestWritCall(kind, namePtr, nameLen, argsPtr, argsLen int32) int32 {
 	name := string(guestRead(namePtr, nameLen))
 	argsBlob := guestRead(argsPtr, argsLen)
 	guestAllocs = nil
+	if kind == callKindMacro {
+		argsForm, err := DecodeForm(argsBlob)
+		if err != nil {
+			return retainGuest(EncodeABIError(err.Error()))
+		}
+		if argsForm.Kind() != syntax.KindList {
+			return retainGuest(EncodeABIError("args must be a list"))
+		}
+		result, err := dispatchGuestMacro(name, argsForm.Items())
+		if err != nil {
+			return retainGuest(EncodeABIError(err.Error()))
+		}
+		blob, err := EncodeForm(result)
+		if err != nil {
+			return retainGuest(EncodeABIError(err.Error()))
+		}
+		return retainGuest(blob)
+	}
 	argsVal, err := Decode(argsBlob, nil)
 	if err != nil {
 		return retainGuest(EncodeABIError(err.Error()))
@@ -71,7 +90,7 @@ func guestWritCall(kind, namePtr, nameLen, argsPtr, argsLen int32) int32 {
 	if argsVal.k != KindList {
 		return retainGuest(EncodeABIError("args must be a list"))
 	}
-	result, err := dispatchGuestCall(kind, name, argsVal.Items())
+	result, err := dispatchGuestFunc(name, argsVal.Items())
 	if err != nil {
 		return retainGuest(EncodeABIError(err.Error()))
 	}

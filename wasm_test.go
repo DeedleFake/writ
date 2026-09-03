@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/syntax"
 )
 
 func buildWasmHello(t *testing.T) string {
@@ -129,17 +130,17 @@ func TestWasmCheckLoadError(t *testing.T) {
 func TestRegisterPackageMacro(t *testing.T) {
 	rt := New()
 	rt.RegisterPackage("mac", runtime.Package{
-		Macros: map[string]runtime.Func{
-			"unless": func(args []runtime.Value) (runtime.Value, error) {
+		Macros: map[string]runtime.Macro{
+			"unless": func(args []syntax.Form) (syntax.Form, error) {
 				if len(args) < 2 {
-					return runtime.Value{}, runtime.ErrorMsg("unless needs 2 args")
+					return syntax.Form{}, runtime.ErrorMsg("unless needs 2 args")
 				}
-				form := runtime.CallList(
-					runtime.Symbol("if"),
-					runtime.CallList(runtime.Symbol("not"), args[0]),
+				form := syntax.CallList(
+					syntax.Symbol("if"),
+					syntax.CallList(syntax.Symbol("not"), args[0]),
 					args[1],
 				)
-				return runtime.CallList(form), nil
+				return syntax.CallList(form), nil
 			},
 		},
 	})

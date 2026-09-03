@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"deedles.dev/writ/scanner"
+	"deedles.dev/writ/syntax"
 )
 
 // Pattern is one parameter or literal match.
@@ -33,15 +34,15 @@ type KeyPat struct {
 // Clause is one function, macro, or handler clause.
 type Clause struct {
 	Params     Params
-	Body       []Value
-	ParamsForm *Value
+	Body       []syntax.Form
+	ParamsForm *syntax.Form
 }
 
 // NamedFn is a top-level def or defm.
 type NamedFn struct {
 	Name     string
 	Clauses  []Clause
-	NameForm Value
+	NameForm syntax.Form
 }
 
 // Handler is a compiled (on ...) form.
@@ -54,14 +55,14 @@ type Handler struct {
 // NamedImport is a top-level keyed (import name: path ...).
 type NamedImport struct {
 	Name     string
-	PathForm Value
-	NameForm Value
+	PathForm syntax.Form
+	NameForm syntax.Form
 }
 
 // Program is expanded top-level forms.
 type Program struct {
 	Handlers []Handler
-	Boot     []Value
+	Boot     []syntax.Form
 	Fns      []NamedFn
 	Macros   []NamedFn
 	Imports  []NamedImport
@@ -76,13 +77,13 @@ type lastAdj struct {
 type compileState struct {
 	onMap          map[string][]Clause
 	fnMap          map[string][]Clause
-	fnNameForm     map[string]Value
+	fnNameForm     map[string]syntax.Form
 	macroMap       map[string][]Clause
-	macroNameForm  map[string]Value
+	macroNameForm  map[string]syntax.Form
 	imports        []NamedImport
 	importNames    map[string]struct{}
 	seenOther      bool
-	boot           []Value
+	boot           []syntax.Form
 	bootAfterOther []bool
 	last           lastAdj
 }
@@ -91,9 +92,9 @@ func newCompileState() *compileState {
 	return &compileState{
 		onMap:         map[string][]Clause{},
 		fnMap:         map[string][]Clause{},
-		fnNameForm:    map[string]Value{},
+		fnNameForm:    map[string]syntax.Form{},
 		macroMap:      map[string][]Clause{},
-		macroNameForm: map[string]Value{},
+		macroNameForm: map[string]syntax.Form{},
 		importNames:   map[string]struct{}{},
 	}
 }
@@ -171,20 +172,20 @@ func (s *compileState) addImports(imps []NamedImport, rt *Machine, session bool)
 	return nil
 }
 
-func asKeyedImport(form Value) ([]NamedImport, bool, error) {
-	if form.k != KindList || form.IsVec() || len(form.Items()) == 0 || !isSymName(form.Items()[0], "import") {
+func asKeyedImport(form syntax.Form) ([]NamedImport, bool, error) {
+	if form.Kind() != syntax.KindList || form.IsVec() || len(form.Items()) == 0 || !syntax.IsName(form.Items()[0], "import") {
 		return nil, false, nil
 	}
-	items := filterComments(form.Items()[1:])
+	items := syntax.FilterComments(form.Items()[1:])
 	var out []NamedImport
 	keyed := false
 	pos := 0
 	i := 0
 	for i < len(items) {
 		a := items[i]
-		if a.isKeySym() {
+		if a.IsKey() {
 			keyed = true
-			name := a.keyName()
+			name := a.KeyName()
 			if i+1 >= len(items) {
 				return nil, false, errf("missing value for %s", a.Name())
 			}
@@ -215,7 +216,7 @@ func asKeyedImport(form Value) ([]NamedImport, bool, error) {
 	return out, true, nil
 }
 
-func (s *compileState) addFn(kind, name string, params Params, body []Value, paramsForm, nameForm Value, adj bool) error {
+func (s *compileState) addFn(kind, name string, params Params, body []syntax.Form, paramsForm, nameForm syntax.Form, adj bool) error {
 	mp := s.fnMap
 	if kind == "macro" {
 		mp = s.macroMap
@@ -244,11 +245,11 @@ func (s *compileState) addFn(kind, name string, params Params, body []Value, par
 	return nil
 }
 
-func (s *compileState) addOn(ev Value, paramsForm Value, body []Value) error {
-	if ev.k != KindSymbol {
+func (s *compileState) addOn(ev syntax.Form, paramsForm syntax.Form, body []syntax.Form) error {
+	if ev.Kind() != syntax.KindSymbol {
 		return errMsg("(on event (args...) body) needs an event name")
 	}
-	if paramsForm.k != KindList || paramsForm.IsVec() {
+	if paramsForm.Kind() != syntax.KindList || paramsForm.IsVec() {
 		return errMsg("(on event (args...) body) needs a parameter list")
 	}
 	name := ev.Name()
@@ -289,26 +290,26 @@ func sessionClash(rt *Machine, session bool, name string, asMacro bool) error {
 }
 
 // session is true for Eval so later lines expand with macros from earlier Evals.
-func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
+func compileForms(forms []syntax.Form, rt *Machine, session bool) (Program, error) {
 	s := newCompileState()
 	for _, form := range forms {
-		if form.k == KindComment {
+		if form.Kind() == syntax.KindComment {
 			continue
 		}
 		if imps, ok, err := asKeyedImport(form); err != nil {
 			return Program{}, err
 		} else if ok {
 			if s.seenOther {
-				return Program{}, errVal(form, "(import ...) must appear before other top-level forms")
+				return Program{}, errForm(form, "(import ...) must appear before other top-level forms")
 			}
 			if err := s.addImports(imps, rt, session); err != nil {
 				return Program{}, err
 			}
 			continue
 		}
-		if form.k == KindList && !form.IsVec() && len(form.Items()) > 0 && isSymName(form.Items()[0], "on") {
+		if form.Kind() == syntax.KindList && !form.IsVec() && len(form.Items()) > 0 && syntax.IsName(form.Items()[0], "on") {
 			s.seenOther = true
-			var ev, paramsForm Value
+			var ev, paramsForm syntax.Form
 			if len(form.Items()) > 1 {
 				ev = form.Items()[1]
 			}
@@ -403,12 +404,12 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 	}
 
 	streamOther := false
-	takeExpanded := func(form Value) (bool, error) {
+	takeExpanded := func(form syntax.Form) (bool, error) {
 		if imps, ok, err := asKeyedImport(form); err != nil {
 			return false, err
 		} else if ok {
 			if streamOther {
-				return false, errVal(form, "(import ...) must appear before other top-level forms")
+				return false, errForm(form, "(import ...) must appear before other top-level forms")
 			}
 			for i := range imps {
 				p, err := expandVal(imps[i].PathForm, env, c)
@@ -469,18 +470,18 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 			streamOther = true
 			return true, nil
 		}
-		if form.k == KindList && !form.IsVec() && len(form.Items()) > 0 && isSymName(form.Items()[0], "on") {
-			var ev, paramsForm Value
+		if form.Kind() == syntax.KindList && !form.IsVec() && len(form.Items()) > 0 && syntax.IsName(form.Items()[0], "on") {
+			var ev, paramsForm syntax.Form
 			if len(form.Items()) > 1 {
 				ev = form.Items()[1]
 			}
 			if len(form.Items()) > 2 {
 				paramsForm = form.Items()[2]
 			}
-			if ev.k != KindSymbol {
+			if ev.Kind() != syntax.KindSymbol {
 				return false, errMsg("(on event (args...) body) needs an event name")
 			}
-			if paramsForm.k != KindList || paramsForm.IsVec() {
+			if paramsForm.Kind() != syntax.KindList || paramsForm.IsVec() {
 				return false, errMsg("(on event (args...) body) needs a parameter list")
 			}
 			params, err := parseParams(paramsForm, "on")
@@ -513,13 +514,13 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 		}
 	}
 
-	var newBoot []Value
+	var newBoot []syntax.Form
 	s.last.ok = false
 	for i, form := range s.boot {
 		if i < len(s.bootAfterOther) && s.bootAfterOther[i] {
 			streamOther = true
 		}
-		xs, err := expandForms([]Value{form}, env, c)
+		xs, err := expandForms([]syntax.Form{form}, env, c)
 		if err != nil {
 			return Program{}, err
 		}
@@ -566,15 +567,15 @@ func compileForms(forms []Value, rt *Machine, session bool) (Program, error) {
 // DefHead is a parsed (def ...) or (defm ...) head.
 type DefHead struct {
 	Name       string
-	NameForm   Value
+	NameForm   syntax.Form
 	Params     Params
-	ParamsForm Value
-	Body       []Value
-	HeadForm   Value
+	ParamsForm syntax.Form
+	Body       []syntax.Form
+	HeadForm   syntax.Form
 }
 
-func asDefForm(form Value, kw string) (DefHead, bool, error) {
-	if form.k != KindList || len(form.Items()) == 0 || !isSymName(form.Items()[0], kw) {
+func asDefForm(form syntax.Form, kw string) (DefHead, bool, error) {
+	if form.Kind() != syntax.KindList || len(form.Items()) == 0 || !syntax.IsName(form.Items()[0], kw) {
 		return DefHead{}, false, nil
 	}
 	h, err := parseDefHead(form, kw)
@@ -585,27 +586,27 @@ func asDefForm(form Value, kw string) (DefHead, bool, error) {
 }
 
 // AsDefForm reports whether form is a (def ...) or (defm ...) when kw matches.
-func AsDefForm(form Value, kw string) (DefHead, bool, error) {
+func AsDefForm(form syntax.Form, kw string) (DefHead, bool, error) {
 	return asDefForm(form, kw)
 }
 
-func parseDefHead(form Value, kw string) (DefHead, error) {
+func parseDefHead(form syntax.Form, kw string) (DefHead, error) {
 	hint := "(" + kw + " (name args...) body)"
-	if form.k != KindList || len(form.Items()) == 0 || !isSymName(form.Items()[0], kw) {
+	if form.Kind() != syntax.KindList || len(form.Items()) == 0 || !syntax.IsName(form.Items()[0], kw) {
 		return DefHead{}, errMsg(hint)
 	}
 	if len(form.Items()) < 2 {
 		return DefHead{}, errMsg(hint)
 	}
 	head := form.Items()[1]
-	if head.k != KindList || head.IsVec() {
+	if head.Kind() != syntax.KindList || head.IsVec() {
 		return DefHead{}, errMsg(hint)
 	}
 	if len(head.Items()) == 0 {
 		return DefHead{}, errMsg(hint + " needs a name")
 	}
 	nameForm := head.Items()[0]
-	if nameForm.k != KindSymbol || nameForm.Name() == "" || strings.HasSuffix(nameForm.Name(), ":") {
+	if nameForm.Kind() != syntax.KindSymbol || nameForm.Name() == "" || strings.HasSuffix(nameForm.Name(), ":") {
 		return DefHead{}, errMsg(hint + " needs a name")
 	}
 	if nameForm.IsTrue() || nameForm.IsFalse() || nameForm.IsNil() {
@@ -614,10 +615,11 @@ func parseDefHead(form Value, kw string) (DefHead, error) {
 	if scanner.IsKeyword(nameForm.Name()) {
 		return DefHead{}, errf("cannot redefine %s", nameForm.Name())
 	}
-	paramsForm := CallList(head.Items()[1:]...)
-	paramsForm = paramsForm.withItems(head.Items()[1:])
+	paramsForm := syntax.CallList(head.Items()[1:]...)
+	paramsForm = paramsForm.WithItems(head.Items()[1:])
 	if head.HasSpan() {
-		paramsForm = paramsForm.withSpan(head.srcSpan().Start, head.srcSpan().End)
+		sp, _ := head.Span()
+		paramsForm = paramsForm.WithSpan(sp.Start, sp.End)
 	}
 	params, err := parseParams(paramsForm, kw)
 	if err != nil {
@@ -633,13 +635,13 @@ func parseDefHead(form Value, kw string) (DefHead, error) {
 	}, nil
 }
 
-func isLit(v Value) bool {
-	return v.k == KindInt || v.k == KindFloat || v.k == KindString || reservedLit(v)
+func isLit(v syntax.Form) bool {
+	return v.Kind() == syntax.KindInt || v.Kind() == syntax.KindFloat || v.Kind() == syntax.KindString || syntax.ReservedLit(v)
 }
 
-func asPattern(v Value) (Pattern, error) {
-	if v.k == KindSymbol {
-		if reservedLit(v) {
+func asPattern(v syntax.Form) (Pattern, error) {
+	if v.Kind() == syntax.KindSymbol {
+		if syntax.ReservedLit(v) {
 			return Pattern{Value: Symbol(v.Name())}, nil
 		}
 		if strings.HasSuffix(v.Name(), ":") && len(v.Name()) > 1 {
@@ -651,13 +653,13 @@ func asPattern(v Value) (Pattern, error) {
 		return Pattern{Bind: true, Name: v.Name()}, nil
 	}
 	if isLit(v) {
-		return Pattern{Value: v}, nil
+		return Pattern{Value: ValueFromLiteralForm(v)}, nil
 	}
 	return Pattern{}, errMsg("parameter must be a name or a literal")
 }
 
-func parseParams(form Value, ctx string) (Params, error) {
-	if form.k != KindList {
+func parseParams(form syntax.Form, ctx string) (Params, error) {
+	if form.Kind() != syntax.KindList {
 		return Params{}, errf("%s needs a parameter list", ctx)
 	}
 	if form.IsVec() {
@@ -670,11 +672,11 @@ func parseParams(form Value, ctx string) (Params, error) {
 	var rest string
 	for i := 0; i < len(form.Items()); {
 		p := form.Items()[i]
-		if p.k == KindComment {
+		if p.Kind() == syntax.KindComment {
 			i++
 			continue
 		}
-		if p.k == KindSplice {
+		if p.Kind() == syntax.KindSplice {
 			if ctx != "defm" {
 				return Params{}, errMsg("only defm can use @rest")
 			}
@@ -684,12 +686,12 @@ func parseParams(form Value, ctx string) (Params, error) {
 			if rest != "" {
 				return Params{}, errMsg("only one @rest parameter is allowed")
 			}
-			inner := p.innerVal()
-			if inner.k != KindSymbol || inner.Name() == "" || strings.HasSuffix(inner.Name(), ":") {
+			inner := p.Inner()
+			if inner.Kind() != syntax.KindSymbol || inner.Name() == "" || strings.HasSuffix(inner.Name(), ":") {
 				return Params{}, errMsg("@rest needs a name")
 			}
 			for _, x := range form.Items()[i+1:] {
-				if x.k != KindComment {
+				if x.Kind() != syntax.KindComment {
 					return Params{}, errMsg("@rest must be last")
 				}
 			}
@@ -705,12 +707,12 @@ func parseParams(form Value, ctx string) (Params, error) {
 		if rest != "" {
 			return Params{}, errMsg("@rest must be last")
 		}
-		if p.isKeySym() {
+		if p.IsKey() {
 			if mode == "pos" {
 				return Params{}, errMsg("do not mix positional and keyword parameters")
 			}
 			mode = "key"
-			name := p.keyName()
+			name := p.KeyName()
 			if name == "" {
 				return Params{}, errMsg("empty parameter name")
 			}
@@ -718,7 +720,7 @@ func parseParams(form Value, ctx string) (Params, error) {
 				return Params{}, errf("duplicate parameter %s", name)
 			}
 			seen = append(seen, name)
-			nextOK := i+1 < len(form.Items()) && !form.Items()[i+1].isKeySym() && form.Items()[i+1].k != KindComment
+			nextOK := i+1 < len(form.Items()) && !form.Items()[i+1].IsKey() && form.Items()[i+1].Kind() != syntax.KindComment
 			if nextOK {
 				pat, err := asPattern(form.Items()[i+1])
 				if err != nil {
@@ -750,21 +752,21 @@ func parseParams(form Value, ctx string) (Params, error) {
 }
 
 type callRaw struct {
-	pos  []Value
+	pos  []syntax.Form
 	keys []struct {
 		name string
-		raw  Value
+		raw  syntax.Form
 	}
 }
 
-func parseCallRaw(raw []Value) (callRaw, error) {
+func parseCallRaw(raw []syntax.Form) (callRaw, error) {
 	var out callRaw
 	keyed := false
 	for i := 0; i < len(raw); {
 		a := raw[i]
-		if a.isKeySym() {
+		if a.IsKey() {
 			keyed = true
-			name := a.keyName()
+			name := a.KeyName()
 			if i+1 >= len(raw) {
 				return callRaw{}, errf("missing value for %s", a.Name())
 			}
@@ -775,7 +777,7 @@ func parseCallRaw(raw []Value) (callRaw, error) {
 			}
 			out.keys = append(out.keys, struct {
 				name string
-				raw  Value
+				raw  syntax.Form
 			}{name, raw[i+1]})
 			i += 2
 			continue
@@ -889,28 +891,28 @@ func unreachableBy(prev []Clause, next Params) bool {
 	return false
 }
 
-func isFnSep(v Value) bool { return isSymName(v, "fn") }
+func isFnSep(v syntax.Form) bool { return syntax.IsName(v, "fn") }
 
-func isFnCall(v Value) bool {
-	if v.k != KindList || v.IsVec() {
+func isFnCall(v syntax.Form) bool {
+	if v.Kind() != syntax.KindList || v.IsVec() {
 		return false
 	}
-	xs := filterComments(v.Items())
-	return len(xs) > 0 && isSymName(xs[0], "fn")
+	xs := syntax.FilterComments(v.Items())
+	return len(xs) > 0 && syntax.IsName(xs[0], "fn")
 }
 
-func walkSlots(v Value, onSlot func(name string, node Value) error) error {
-	switch v.k {
-	case KindComment:
+func walkSlots(v syntax.Form, onSlot func(name string, node syntax.Form) error) error {
+	switch v.Kind() {
+	case syntax.KindComment:
 		return nil
-	case KindSymbol:
+	case syntax.KindSymbol:
 		if strings.HasPrefix(v.Name(), "#") {
 			return onSlot(v.Name(), v)
 		}
 		return nil
-	case KindQuote, KindUnquote, KindSplice:
-		return walkSlots(v.innerVal(), onSlot)
-	case KindList:
+	case syntax.KindQuote, syntax.KindUnquote, syntax.KindSplice:
+		return walkSlots(v.Inner(), onSlot)
+	case syntax.KindList:
 		if isFnCall(v) {
 			return nil
 		}
@@ -920,12 +922,9 @@ func walkSlots(v Value, onSlot func(name string, node Value) error) error {
 			}
 		}
 		return nil
-	case KindMap:
-		if v.mapData() == nil {
-			return nil
-		}
-		for _, x := range v.mapData().vals {
-			if err := walkSlots(x, onSlot); err != nil {
+	case syntax.KindMap:
+		for _, pair := range v.Pairs() {
+			if err := walkSlots(pair.Value, onSlot); err != nil {
 				return err
 			}
 		}
@@ -935,12 +934,12 @@ func walkSlots(v Value, onSlot func(name string, node Value) error) error {
 	}
 }
 
-func maxSlot(args []Value) (int, error) {
+func maxSlot(args []syntax.Form) (int, error) {
 	max := 0
 	for _, a := range args {
-		err := walkSlots(a, func(name string, node Value) error {
+		err := walkSlots(a, func(name string, node syntax.Form) error {
 			if !scanner.IsSlot(name) {
-				return errValf(node, "bad slot %s", name)
+				return errFormf(node, "bad slot %s", name)
 			}
 			n, _ := strconv.Atoi(name[1:])
 			if n > max {
@@ -955,22 +954,23 @@ func maxSlot(args []Value) (int, error) {
 	return max, nil
 }
 
-func hasNestedFn(args []Value) bool {
-	var walk func(Value) bool
-	walk = func(v Value) bool {
-		switch v.k {
-		case KindQuote, KindUnquote, KindSplice:
-			return walk(v.innerVal())
-		case KindList:
+func hasNestedFn(args []syntax.Form) bool {
+	var walk func(syntax.Form) bool
+	walk = func(v syntax.Form) bool {
+		switch v.Kind() {
+		case syntax.KindQuote, syntax.KindUnquote, syntax.KindSplice:
+			return walk(v.Inner())
+		case syntax.KindList:
 			if isFnCall(v) {
 				return true
 			}
 			return slices.ContainsFunc(v.Items(), walk)
-		case KindMap:
-			if v.mapData() == nil {
-				return false
+		case syntax.KindMap:
+			vals := make([]syntax.Form, len(v.Pairs()))
+			for i, pair := range v.Pairs() {
+				vals[i] = pair.Value
 			}
-			return slices.ContainsFunc(v.mapData().vals, walk)
+			return slices.ContainsFunc(vals, walk)
 		default:
 			return false
 		}
@@ -986,12 +986,12 @@ func slotParams(n int) Params {
 	return Params{Pats: pats}
 }
 
-func shortFnBody(args []Value) []Value {
-	xs := filterComments(args)
+func shortFnBody(args []syntax.Form) []syntax.Form {
+	xs := syntax.FilterComments(args)
 	if len(xs) <= 1 {
 		return xs
 	}
-	return []Value{CallList(xs...)}
+	return []syntax.Form{syntax.CallList(xs...)}
 }
 
 type fnParsed struct {
@@ -999,7 +999,7 @@ type fnParsed struct {
 	clauses []Clause
 }
 
-func parseFn(args []Value) (fnParsed, error) {
+func parseFn(args []syntax.Form) (fnParsed, error) {
 	n, err := maxSlot(args)
 	if err != nil {
 		return fnParsed{}, err
@@ -1020,7 +1020,7 @@ func parseFn(args []Value) (fnParsed, error) {
 	i := 0
 	for i < len(args) {
 		paramsForm := args[i]
-		if paramsForm.k != KindList {
+		if paramsForm.Kind() != syntax.KindList {
 			return fnParsed{}, errMsg("(fn (args...) body)")
 		}
 		params, err := parseParams(paramsForm, "fn")
@@ -1028,7 +1028,7 @@ func parseFn(args []Value) (fnParsed, error) {
 			return fnParsed{}, err
 		}
 		i++
-		var body []Value
+		var body []syntax.Form
 		for i < len(args) && !isFnSep(args[i]) {
 			body = append(body, args[i])
 			i++
@@ -1049,7 +1049,7 @@ func parseFn(args []Value) (fnParsed, error) {
 }
 
 // ParseFn parses (fn ...) arguments.
-func ParseFn(args []Value) (kind string, clauses []Clause, err error) {
+func ParseFn(args []syntax.Form) (kind string, clauses []Clause, err error) {
 	parsed, err := parseFn(args)
 	if err != nil {
 		return "", nil, err
@@ -1059,30 +1059,30 @@ func ParseFn(args []Value) (kind string, clauses []Clause, err error) {
 
 // IfClause is one branch of (if ...).
 type IfClause struct {
-	Test *Value
+	Test *syntax.Form
 	Not  bool
-	Body []Value
+	Body []syntax.Form
 }
 
-func isElseSym(v Value) bool { return isSymName(v, "else") }
-func isIfSym(v Value) bool   { return isSymName(v, "if") }
-func isNotSym(v Value) bool  { return isSymName(v, "not") }
+func isElseSym(v syntax.Form) bool { return syntax.IsName(v, "else") }
+func isIfSym(v syntax.Form) bool   { return syntax.IsName(v, "if") }
+func isNotSym(v syntax.Form) bool  { return syntax.IsName(v, "not") }
 
-func readIfTest(args []Value, i int, ctx string) (test Value, not bool, next int, err error) {
+func readIfTest(args []syntax.Form, i int, ctx string) (test syntax.Form, not bool, next int, err error) {
 	if i >= len(args) {
-		return Value{}, false, 0, errf("%s needs a test", ctx)
+		return syntax.Form{}, false, 0, errf("%s needs a test", ctx)
 	}
 	if isNotSym(args[i]) {
 		i++
 		if i >= len(args) {
-			return Value{}, false, 0, errf("%s not needs a test", ctx)
+			return syntax.Form{}, false, 0, errf("%s not needs a test", ctx)
 		}
 		return args[i], true, i + 1, nil
 	}
 	return args[i], false, i + 1, nil
 }
 
-func parseIfArgs(args []Value) ([]IfClause, error) {
+func parseIfArgs(args []syntax.Form) ([]IfClause, error) {
 	if len(args) == 0 {
 		return nil, errMsg("(if test ...)")
 	}
@@ -1092,7 +1092,7 @@ func parseIfArgs(args []Value) ([]IfClause, error) {
 		return nil, err
 	}
 	curTest, curNot := test, not
-	var body []Value
+	var body []syntax.Form
 	for i < len(args) {
 		a := args[i]
 		if isElseSym(a) {
@@ -1121,7 +1121,7 @@ func parseIfArgs(args []Value) ([]IfClause, error) {
 }
 
 // ParseIfArgs parses (if ...) arguments.
-func ParseIfArgs(args []Value) ([]IfClause, error) {
+func ParseIfArgs(args []syntax.Form) ([]IfClause, error) {
 	return parseIfArgs(args)
 }
 

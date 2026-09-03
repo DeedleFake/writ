@@ -2,6 +2,7 @@ package writ
 
 import (
 	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/syntax"
 	"errors"
 	"math/big"
 	"os"
@@ -270,6 +271,18 @@ func TestEvalQuoteEval(t *testing.T) {
 		t.Fatalf("splice: %v", v)
 	}
 	evalErr(t, ",x")
+	v = evals(t, "''x")
+	if v.Kind() != runtime.KindSyntax {
+		t.Fatalf("nested quote shape: %v", v)
+	}
+	f, ok := v.Form()
+	if !ok || f.Kind() != syntax.KindQuote || f.Inner().Name() != "x" {
+		t.Fatalf("nested quote: %v", v)
+	}
+	v = evals(t, "(eval ''x)")
+	if !v.Equal(runtime.Symbol("x")) {
+		t.Fatalf("eval nested quote: %v", v)
+	}
 }
 
 func TestEvalMacros(t *testing.T) {

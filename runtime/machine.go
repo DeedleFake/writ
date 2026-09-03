@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"deedles.dev/writ/syntax"
 	"maps"
 	"slices"
 	"sort"
@@ -11,11 +12,15 @@ import (
 // Func is a native function. Arguments are positional.
 type Func func(args []Value) (Value, error)
 
+// Macro is a native macro. Arguments are unevaluated forms. The result is
+// one form, or a list of forms to splice at the call site.
+type Macro func(args []syntax.Form) (syntax.Form, error)
+
 // Package is funcs, macros, and values for (import). The checker types funcs
 // as fn(...) -> dynamic(any()) and values as any().
 type Package struct {
 	Funcs  map[string]Func
-	Macros map[string]Func
+	Macros map[string]Macro
 	Vals   map[string]Value
 }
 
@@ -93,6 +98,15 @@ func (m *Machine) BeginBudget() {
 // hostCall runs fn without holding mu so host hooks and native
 // functions may call host Runtime methods.
 func (m *Machine) hostCall(fn func() (Value, error)) (Value, error) {
+	if m == nil {
+		return fn()
+	}
+	m.mu.Unlock()
+	defer m.mu.Lock()
+	return fn()
+}
+
+func (m *Machine) hostCallForm(fn func() (syntax.Form, error)) (syntax.Form, error) {
 	if m == nil {
 		return fn()
 	}
@@ -210,7 +224,7 @@ func (m *Machine) ResetLocked() {
 }
 
 // Expand compiles and macro-expands forms. It does not parse source.
-func (m *Machine) Expand(forms []Value) (Program, error) {
+func (m *Machine) Expand(forms []syntax.Form) (Program, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.BeginBudget()
@@ -218,12 +232,12 @@ func (m *Machine) Expand(forms []Value) (Program, error) {
 }
 
 // ExpandLocked is Expand without taking the lock.
-func (m *Machine) ExpandLocked(forms []Value) (Program, error) {
+func (m *Machine) ExpandLocked(forms []syntax.Form) (Program, error) {
 	return compileForms(forms, m, false)
 }
 
 // Eval evaluates already-parsed forms (boot forms only).
-func (m *Machine) Eval(forms []Value) (Value, error) {
+func (m *Machine) Eval(forms []syntax.Form) (Value, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.BeginBudget()
@@ -231,7 +245,7 @@ func (m *Machine) Eval(forms []Value) (Value, error) {
 }
 
 // EvalLocked is Eval without taking the lock.
-func (m *Machine) EvalLocked(forms []Value) (Value, error) {
+func (m *Machine) EvalLocked(forms []syntax.Form) (Value, error) {
 	file := m.file
 	prog, err := compileForms(forms, m, true)
 	if err != nil {
@@ -263,7 +277,7 @@ func (m *Machine) EvalLocked(forms []Value) (Value, error) {
 }
 
 // EvalModule evaluates an imported script without replacing the caller's env.
-func (m *Machine) EvalModule(path string, forms []Value) (Value, error) {
+func (m *Machine) EvalModule(path string, forms []syntax.Form) (Value, error) {
 	prog, err := compileForms(forms, m, false)
 	if err != nil {
 		return Value{}, asError(err).withFile(path)
@@ -414,8 +428,8 @@ func (m *Machine) FireLocked(event string, payload map[string]Value) error {
 	return nil
 }
 
-func evalImport(args []Value, env *env, c *ctx) (Value, error) {
-	parsed, err := parseCallRaw(filterComments(args))
+func evalImport(args []syntax.Form, env *env, c *ctx) (Value, error) {
+	parsed, err := parseCallRaw(syntax.FilterComments(args))
 	if err != nil {
 		return Value{}, err
 	}
@@ -445,7 +459,7 @@ func evalNamedImports(imps []NamedImport, env *env, c *ctx) error {
 			return err
 		}
 		if path.k != KindString {
-			return errVal(imp.PathForm, "import needs a string path")
+			return errForm(imp.PathForm, "import needs a string path")
 		}
 		if c.rt == nil || c.rt.Import == nil {
 			return errMsg("import needs a runtime")
@@ -468,7 +482,7 @@ func PackageValue(p Package) Value {
 	}
 	for name, f := range p.Macros {
 		fn := f
-		names[name] = Value{k: KindMacro, p: &fnVal{native: fn, name: name}}
+		names[name] = Value{k: KindMacro, p: &fnVal{macro: fn, name: name}}
 	}
 	maps.Copy(names, p.Vals)
 	return mapFromNames(names)

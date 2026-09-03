@@ -10,6 +10,8 @@ import (
 	"os"
 	"sync"
 
+	"deedles.dev/writ/syntax"
+
 	"github.com/tetratelabs/wazero"
 	"github.com/tetratelabs/wazero/api"
 	"github.com/tetratelabs/wazero/imports/wasi_snapshot_preview1"
@@ -141,7 +143,7 @@ func (w *wasmInst) readPackage() (Package, error) {
 		pkg.Funcs = map[string]Func{}
 	}
 	if pkg.Macros == nil {
-		pkg.Macros = map[string]Func{}
+		pkg.Macros = map[string]Macro{}
 	}
 	if pkg.Vals == nil {
 		pkg.Vals = map[string]Value{}
@@ -154,8 +156,8 @@ func (w *wasmInst) readPackage() (Package, error) {
 	}
 	for name := range pkg.Macros {
 		n := name
-		pkg.Macros[n] = func(args []Value) (Value, error) {
-			return w.call(callKindMacro, n, args)
+		pkg.Macros[n] = func(args []syntax.Form) (syntax.Form, error) {
+			return w.callMacro(n, args)
 		}
 	}
 	return pkg, nil
@@ -192,6 +194,59 @@ func (w *wasmInst) call(kind int32, name string, args []Value) (Value, error) {
 		return Value{}, errMsg("writ_call returned nothing")
 	}
 	return w.decodeResult(api.DecodeI32(res[0]))
+}
+
+func (w *wasmInst) callMacro(name string, args []syntax.Form) (syntax.Form, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	blob, err := EncodeForm(syntax.CallList(args...))
+	if err != nil {
+		return syntax.Form{}, err
+	}
+	nameBytes := []byte(name)
+	namePtr, err := w.allocWrite(nameBytes)
+	if err != nil {
+		return syntax.Form{}, err
+	}
+	argsPtr, err := w.allocWrite(blob)
+	if err != nil {
+		return syntax.Form{}, err
+	}
+	fn := w.mod.ExportedFunction("writ_call")
+	res, err := fn.Call(w.ctx,
+		api.EncodeI32(callKindMacro),
+		api.EncodeI32(namePtr),
+		api.EncodeI32(int32(len(nameBytes))),
+		api.EncodeI32(argsPtr),
+		api.EncodeI32(int32(len(blob))),
+	)
+	if err != nil {
+		return syntax.Form{}, err
+	}
+	if len(res) == 0 {
+		return syntax.Form{}, errMsg("writ_call returned nothing")
+	}
+	return w.decodeFormResult(api.DecodeI32(res[0]))
+}
+
+func (w *wasmInst) decodeFormResult(ptr int32) (syntax.Form, error) {
+	mem := w.mod.Memory()
+	if mem == nil {
+		return syntax.Form{}, errMsg("missing memory")
+	}
+	tag, ok := mem.ReadByte(uint32(ptr))
+	if !ok {
+		return syntax.Form{}, errMsg("invalid result pointer")
+	}
+	r := w.memReader(ptr)
+	if tag == tagError {
+		msg, err := DecodeABIError(r)
+		if err != nil {
+			return syntax.Form{}, err
+		}
+		return syntax.Form{}, errMsg(msg)
+	}
+	return DecodeFormReader(r)
 }
 
 func (w *wasmInst) allocWrite(b []byte) (int32, error) {

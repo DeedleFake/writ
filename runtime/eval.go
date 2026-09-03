@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"deedles.dev/writ/scanner"
+	"deedles.dev/writ/syntax"
 )
 
 type ctx struct {
@@ -62,20 +63,20 @@ type callParts struct {
 	keys map[string]Value
 }
 
-func evalCallRaw(raw []Value, env *env, c *ctx) (callParts, error) {
+func evalCallRaw(raw []syntax.Form, env *env, c *ctx) (callParts, error) {
 	out := callParts{keys: map[string]Value{}}
 	keyed := false
 	for i := 0; i < len(raw); {
 		a := raw[i]
-		if a.k == KindComment {
+		if a.Kind() == syntax.KindComment {
 			i++
 			continue
 		}
-		if a.k == KindSplice {
+		if a.Kind() == syntax.KindSplice {
 			if keyed {
 				return callParts{}, errMsg("positional argument after key:")
 			}
-			inner, err := spliceInner(a.innerVal(), env, c, false)
+			inner, err := spliceInner(a.Inner(), env, c, false)
 			if err != nil {
 				return callParts{}, err
 			}
@@ -87,9 +88,9 @@ func evalCallRaw(raw []Value, env *env, c *ctx) (callParts, error) {
 			i++
 			continue
 		}
-		if a.isKeySym() {
+		if a.IsKey() {
 			keyed = true
-			name := a.keyName()
+			name := a.KeyName()
 			if i+1 >= len(raw) {
 				return callParts{}, errf("missing value for %s", a.Name())
 			}
@@ -117,42 +118,43 @@ func evalCallRaw(raw []Value, env *env, c *ctx) (callParts, error) {
 	return out, nil
 }
 
-func evalVal(v Value, env *env, c *ctx) (Value, error) {
+func evalVal(v syntax.Form, env *env, c *ctx) (Value, error) {
 	if err := c.push(); err != nil {
 		return Value{}, err
 	}
 	defer c.pop()
-	switch v.k {
-	case KindComment:
+	switch v.Kind() {
+	case syntax.KindComment:
 		return Nil, nil
-	case KindInt, KindFloat, KindString, KindFn, KindMacro, KindNative:
-		return v, nil
-	case KindQuote:
-		return evalQuote(v.innerVal(), env, c, 1)
-	case KindUnquote:
-		return Value{}, errVal(v, "comma not inside quote")
-	case KindSplice:
-		return Value{}, errVal(v, "@ needs a list to insert into")
-	case KindSymbol:
-		if reservedLit(v) {
+	case syntax.KindInt, syntax.KindFloat, syntax.KindString:
+		return ValueFromLiteralForm(v), nil
+	case syntax.KindQuote:
+		return evalQuote(v.Inner(), env, c, 1)
+	case syntax.KindUnquote:
+		return Value{}, errForm(v, "comma not inside quote")
+	case syntax.KindSplice:
+		return Value{}, errForm(v, "@ needs a list to insert into")
+	case syntax.KindSymbol:
+		if syntax.ReservedLit(v) {
 			return Symbol(v.Name()), nil
 		}
 		return lookup(env, v.Name())
-	case KindMap:
+	case syntax.KindMap:
 		m := newMap()
-		if v.mapData() != nil {
-			for i, k := range v.mapData().keys {
-				val, err := evalVal(v.mapData().vals[i], env, c)
-				if err != nil {
-					return Value{}, err
-				}
-				m.put(k, val)
+		for _, pair := range v.Pairs() {
+			val, err := evalVal(pair.Value, env, c)
+			if err != nil {
+				return Value{}, err
 			}
+			m.put(Symbol(pair.Key.Name()), val)
 		}
 		return Value{k: KindMap, p: m}, nil
-	case KindList:
+	case syntax.KindList:
 		if len(v.Items()) == 0 {
-			return v, nil
+			if v.IsVec() {
+				return List(), nil
+			}
+			return CallList(), nil
 		}
 		if v.IsVec() {
 			xs, err := evalSpread(v.Items(), env, c, false)
@@ -161,12 +163,12 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 			}
 			return List(xs...), nil
 		}
-		xs := filterComments(v.Items())
+		xs := syntax.FilterComments(v.Items())
 		if len(xs) == 0 {
 			return Nil, nil
 		}
 		head := xs[0]
-		if head.k != KindSplice && head.k == KindSymbol {
+		if head.Kind() != syntax.KindSplice && head.Kind() == syntax.KindSymbol {
 			if sf, handled, err := special(head.Name(), xs[1:], env, c); handled {
 				return sf, err
 			}
@@ -197,7 +199,7 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 				}
 			}
 		}
-		if head.k == KindSplice {
+		if head.Kind() == syntax.KindSplice {
 			parts, err := evalSpread(xs, env, c, false)
 			if err != nil {
 				return Value{}, err
@@ -220,35 +222,35 @@ func evalVal(v Value, env *env, c *ctx) (Value, error) {
 		}
 		return applyFn(fn, call, env, c)
 	default:
-		return v, nil
+		return ValueFromLiteralForm(v), nil
 	}
 }
 
-func spliceInner(v Value, env *env, c *ctx, inQuote bool) (Value, error) {
-	if v.k == KindUnquote {
+func spliceInner(v syntax.Form, env *env, c *ctx, inQuote bool) (Value, error) {
+	if v.Kind() == syntax.KindUnquote {
 		if !inQuote {
-			return Value{}, errVal(v, "comma not inside quote")
+			return Value{}, errForm(v, "comma not inside quote")
 		}
-		return evalVal(v.innerVal(), env, c)
+		return evalVal(v.Inner(), env, c)
 	}
 	return evalVal(v, env, c)
 }
 
-func asSpliceList(v Value, at Value) ([]Value, error) {
+func asSpliceList(v Value, at syntax.Form) ([]Value, error) {
 	if v.k != KindList {
-		return nil, errVal(at, "@ needs a list")
+		return nil, errForm(at, "@ needs a list")
 	}
-	return filterComments(v.Items()), nil
+	return v.Items(), nil
 }
 
-func evalSpread(items []Value, env *env, c *ctx, inQuote bool) ([]Value, error) {
+func evalSpread(items []syntax.Form, env *env, c *ctx, inQuote bool) ([]Value, error) {
 	var out []Value
 	for _, a := range items {
-		if a.k == KindComment {
+		if a.Kind() == syntax.KindComment {
 			continue
 		}
-		if a.k == KindSplice {
-			inner, err := spliceInner(a.innerVal(), env, c, inQuote)
+		if a.Kind() == syntax.KindSplice {
+			inner, err := spliceInner(a.Inner(), env, c, inQuote)
 			if err != nil {
 				return nil, err
 			}
@@ -268,32 +270,32 @@ func evalSpread(items []Value, env *env, c *ctx, inQuote bool) ([]Value, error) 
 	return out, nil
 }
 
-func evalQuote(v Value, env *env, c *ctx, depth int) (Value, error) {
-	switch v.k {
-	case KindUnquote:
+func evalQuote(v syntax.Form, env *env, c *ctx, depth int) (Value, error) {
+	switch v.Kind() {
+	case syntax.KindUnquote:
 		if depth == 1 {
-			return evalVal(v.innerVal(), env, c)
+			return evalVal(v.Inner(), env, c)
 		}
-		inner, err := evalQuote(v.innerVal(), env, c, depth-1)
+		inner, err := evalQuote(v.Inner(), env, c, depth-1)
 		if err != nil {
 			return Value{}, err
 		}
-		return Unquote(inner), nil
-	case KindQuote:
-		inner, err := evalQuote(v.innerVal(), env, c, depth+1)
+		return Syntax(syntax.Unquote(formFromResidual(inner))), nil
+	case syntax.KindQuote:
+		inner, err := evalQuote(v.Inner(), env, c, depth+1)
 		if err != nil {
 			return Value{}, err
 		}
-		return Quote(inner), nil
-	case KindSplice:
+		return Syntax(syntax.Quote(formFromResidual(inner))), nil
+	case syntax.KindSplice:
 		if depth != 1 {
-			inner, err := evalQuote(v.innerVal(), env, c, depth)
+			inner, err := evalQuote(v.Inner(), env, c, depth)
 			if err != nil {
 				return Value{}, err
 			}
-			return Splice(inner), nil
+			return Syntax(syntax.Splice(formFromResidual(inner))), nil
 		}
-		inner, err := spliceInner(v.innerVal(), env, c, true)
+		inner, err := spliceInner(v.Inner(), env, c, true)
 		if err != nil {
 			return Value{}, err
 		}
@@ -302,15 +304,14 @@ func evalQuote(v Value, env *env, c *ctx, depth int) (Value, error) {
 			return Value{}, err
 		}
 		return List(xs...), nil
-	case KindList:
+	case syntax.KindList:
 		var out []Value
 		for _, item := range v.Items() {
-			if item.k == KindComment {
-				out = append(out, item)
+			if item.Kind() == syntax.KindComment {
 				continue
 			}
-			if item.k == KindSplice && depth == 1 {
-				inner, err := spliceInner(item.innerVal(), env, c, true)
+			if item.Kind() == syntax.KindSplice && depth == 1 {
+				inner, err := spliceInner(item.Inner(), env, c, true)
 				if err != nil {
 					return Value{}, err
 				}
@@ -331,26 +332,24 @@ func evalQuote(v Value, env *env, c *ctx, depth int) (Value, error) {
 			return List(out...), nil
 		}
 		return CallList(out...), nil
-	case KindMap:
+	case syntax.KindMap:
 		m := newMap()
-		if v.mapData() != nil {
-			for i, k := range v.mapData().keys {
-				val, err := evalQuote(v.mapData().vals[i], env, c, depth)
-				if err != nil {
-					return Value{}, err
-				}
-				m.put(k, val)
+		for _, pair := range v.Pairs() {
+			val, err := evalQuote(pair.Value, env, c, depth)
+			if err != nil {
+				return Value{}, err
 			}
+			m.put(Symbol(pair.Key.Name()), val)
 		}
 		return Value{k: KindMap, p: m}, nil
-	case KindSymbol:
+	case syntax.KindSymbol:
 		return Symbol(v.Name()), nil
 	default:
-		return v, nil
+		return ValueFromLiteralForm(v), nil
 	}
 }
 
-func special(name string, args []Value, env *env, c *ctx) (Value, bool, error) {
+func special(name string, args []syntax.Form, env *env, c *ctx) (Value, bool, error) {
 	switch name {
 	case "if":
 		clauses, err := parseIfArgs(args)
@@ -440,7 +439,7 @@ func special(name string, args []Value, env *env, c *ctx) (Value, bool, error) {
 		if err != nil {
 			return Value{}, true, err
 		}
-		v, err := evalVal(inner, env, c)
+		v, err := evalVal(FormFromValue(inner), env, c)
 		return v, true, err
 	case "after":
 		secV := Int64(0)
@@ -471,7 +470,7 @@ func special(name string, args []Value, env *env, c *ctx) (Value, bool, error) {
 			}
 			rt.pendingAfter++
 		}
-		envCap, bodyCap := env, append([]Value(nil), body...)
+		envCap, bodyCap := env, append([]syntax.Form(nil), body...)
 		sched(d, func() {
 			if rt != nil {
 				rt.mu.Lock()
@@ -506,8 +505,8 @@ func special(name string, args []Value, env *env, c *ctx) (Value, bool, error) {
 	}
 }
 
-func evalDot(args []Value, env *env, c *ctx) (Value, error) {
-	args = filterComments(args)
+func evalDot(args []syntax.Form, env *env, c *ctx) (Value, error) {
+	args = syntax.FilterComments(args)
 	if len(args) < 2 {
 		return Value{}, errMsg(". needs a map and a name")
 	}
@@ -516,23 +515,23 @@ func evalDot(args []Value, env *env, c *ctx) (Value, error) {
 		return Value{}, err
 	}
 	for _, k := range args[1:] {
-		if k.k != KindSymbol || k.isKeySym() {
-			return Value{}, errVal(k, ". key must be a name")
+		if k.Kind() != syntax.KindSymbol || k.IsKey() {
+			return Value{}, errForm(k, ". key must be a name")
 		}
 		if cur.k != KindMap {
-			return Value{}, errVal(k, ". needs a map")
+			return Value{}, errForm(k, ". needs a map")
 		}
 		name := k.Name()
 		v, ok := cur.mapData().get(name)
 		if !ok {
-			return Value{}, errValf(k, "unknown field %s", name)
+			return Value{}, errFormf(k, "unknown field %s", name)
 		}
 		cur = v
 	}
 	return cur, nil
 }
 
-func makeFn(args []Value, env *env) (Value, error) {
+func makeFn(args []syntax.Form, env *env) (Value, error) {
 	parsed, err := parseFn(args)
 	if err != nil {
 		return Value{}, err
@@ -544,7 +543,7 @@ func makeFn(args []Value, env *env) (Value, error) {
 	return makeFnVal(clauses, env), nil
 }
 
-func evalLet(args []Value, env *env, c *ctx) (Value, error) {
+func evalLet(args []syntax.Form, env *env, c *ctx) (Value, error) {
 	if len(args) == 0 {
 		return Value{}, errMsg("(let map body...)")
 	}
@@ -571,33 +570,31 @@ func evalLet(args []Value, env *env, c *ctx) (Value, error) {
 	return last, nil
 }
 
-func quotedVal(v Value) Value { return Quote(v) }
-
-func pipeStepForm(step, cur Value) (Value, error) {
-	q := quotedVal(cur)
-	if step.k == KindSymbol {
-		return CallList(step, q), nil
+func pipeStepForm(step syntax.Form, cur Value) (syntax.Form, error) {
+	q := syntax.Quote(FormFromValue(cur))
+	if step.Kind() == syntax.KindSymbol {
+		return syntax.CallList(step, q), nil
 	}
-	if step.k != KindList || step.IsVec() {
-		return Value{}, errMsg("pipe step must be a call or a name")
+	if step.Kind() != syntax.KindList || step.IsVec() {
+		return syntax.Form{}, errMsg("pipe step must be a call or a name")
 	}
-	xs := filterComments(step.Items())
+	xs := syntax.FilterComments(step.Items())
 	if len(xs) == 0 {
-		return Value{}, errMsg("pipe step must be a call or a name")
+		return syntax.Form{}, errMsg("pipe step must be a call or a name")
 	}
 	for _, a := range xs[1:] {
-		if a.isKeySym() {
-			return Value{}, errMsg("pipe steps cannot use name: arguments")
+		if a.IsKey() {
+			return syntax.Form{}, errMsg("pipe steps cannot use name: arguments")
 		}
 	}
-	out := make([]Value, 0, len(xs)+1)
+	out := make([]syntax.Form, 0, len(xs)+1)
 	out = append(out, xs[0], q)
 	out = append(out, xs[1:]...)
-	return CallList(out...), nil
+	return syntax.CallList(out...), nil
 }
 
-func evalPipe(args []Value, env *env, c *ctx) (Value, error) {
-	steps := filterComments(args)
+func evalPipe(args []syntax.Form, env *env, c *ctx) (Value, error) {
+	steps := syntax.FilterComments(args)
 	if len(steps) < 2 {
 		return Value{}, errMsg("pipe needs a value and at least one step")
 	}
@@ -618,7 +615,7 @@ func evalPipe(args []Value, env *env, c *ctx) (Value, error) {
 	return cur, nil
 }
 
-func evalMacroCall(mac Value, raw []Value, env *env, c *ctx, call Value) (Value, error) {
+func evalMacroCall(mac Value, raw []syntax.Form, env *env, c *ctx, call syntax.Form) (Value, error) {
 	f := mac.fnData()
 	if f == nil {
 		return Value{}, errMsg("not a macro")
@@ -770,7 +767,7 @@ func tryBind(params Params, call callParts, env *env) bool {
 	return true
 }
 
-func evalForms(forms []Value, env *env, c *ctx) (Value, error) {
+func evalForms(forms []syntax.Form, env *env, c *ctx) (Value, error) {
 	last := Nil
 	for _, f := range forms {
 		var err error

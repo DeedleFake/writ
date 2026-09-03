@@ -5,7 +5,10 @@
 //	GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared -o wasmhello.wasm
 package main
 
-import "deedles.dev/writ/runtime"
+import (
+	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/syntax"
+)
 
 func main() {}
 
@@ -14,7 +17,7 @@ func init() {
 		Funcs: map[string]runtime.Func{
 			"greet": greet,
 		},
-		Macros: map[string]runtime.Func{
+		Macros: map[string]runtime.Macro{
 			"unless": unless,
 		},
 		Vals: map[string]runtime.Value{
@@ -31,14 +34,14 @@ func greet(args []runtime.Value) (runtime.Value, error) {
 	return runtime.String("hello, " + name), nil
 }
 
-func unless(args []runtime.Value) (runtime.Value, error) {
+func unless(args []syntax.Form) (syntax.Form, error) {
 	if len(args) < 2 {
-		return runtime.Value{}, runtime.ErrorMsg("unless needs a test and a body")
+		return syntax.Form{}, runtime.ErrorMsg("unless needs a test and a body")
 	}
-	form := runtime.CallList(
-		runtime.Symbol("if"),
-		runtime.CallList(runtime.Symbol("not"), args[0]),
+	form := syntax.CallList(
+		syntax.Symbol("if"),
+		syntax.CallList(syntax.Symbol("not"), args[0]),
 		args[1],
 	)
-	return runtime.CallList(form), nil
+	return syntax.CallList(form), nil
 }
