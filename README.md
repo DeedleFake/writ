@@ -77,10 +77,11 @@ Relative paths are resolved from the importing file. Search directories can be s
 Resolution order for a path without a known suffix:
 
 1. An in-process package registered with `RegisterPackage`
-2. A `.writ` file under the importing file’s directory and `WithSearchPath` (cwd is used only when there is no importing file and no search path)
-3. A native plugin (`.so` / `.dylib` / `.dll`) only if the host called `WithNativePlugins`
+2. A `.writ` file under the importing file's directory and `WithSearchPath` (cwd is used only when there is no importing file and no search path)
+3. A `.wasm` module in those same directories. WASM packages are sandboxed (no WASI preopens, no filesystem or network) and load by default, including during `check`
+4. A native plugin (`.so` / `.dylib` / `.dll`) only if the host called `WithNativePlugins`
 
-Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbsoluteImports` is set. Untrusted `Eval` should leave plugins off and set an explicit search path. The default unlimited eval budget is not a sandbox.
+Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbsoluteImports` is set. Untrusted `Eval` should leave native plugins off and set an explicit search path. The default unlimited eval budget is not a sandbox. WASM imports do not require `WithNativePlugins`.
 
 ```
 (let [lib: (import "lib.writ")]
@@ -116,13 +117,15 @@ _ = rt.Fire("tick", map[string]runtime.Value{"n": runtime.Int64(1)})
 res := rt.Check(strings.NewReader(src)) // diagnostics and type hints
 ```
 
-A native plugin exports:
+A WASM package is a WASI reactor (`GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared`) that exports `writ_abi`, `writ_alloc`, `writ_package`, and `writ_call`. See `example/wasmhello`.
+
+A native plugin still exports:
 
 ```go
 func WritPackage() runtime.Package
 ```
 
-Build with `go build -buildmode=plugin`. In-process `RegisterPackage` is the embedding path that works everywhere, including WASM.
+Build with `go build -buildmode=plugin`. Native `.so` files need `WithNativePlugins` and are never opened during `check`. In-process `RegisterPackage` is the embedding path that works everywhere, including when the host itself is compiled to WASM.
 
 ## Parse, format, and tokens
 
