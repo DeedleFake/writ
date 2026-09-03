@@ -108,6 +108,24 @@ func TestWasmMissingAndGarbage(t *testing.T) {
 	}
 }
 
+func TestWasmCheckLoadError(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "junk.wasm")
+	if err := os.WriteFile(p, []byte("not a wasm"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "use.writ")
+	body := "(import m: \"" + filepath.ToSlash(p) + "\")\n1\n"
+	if err := os.WriteFile(src, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := New(WithAllowAbsoluteImports())
+	res := rt.CheckFile(src)
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("expected check diagnostic for garbage wasm")
+	}
+}
+
 func TestRegisterPackageMacro(t *testing.T) {
 	rt := New()
 	rt.RegisterPackage("mac", runtime.Package{

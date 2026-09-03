@@ -279,8 +279,7 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 		}
 		pkg, err := runtime.LoadWasm(path)
 		if err != nil {
-			anyT := types.Any()
-			return types.Dynamic(types.MapType(nil, &anyT)), nil, nil
+			return types.Type{}, nil, err
 		}
 		exp := runtime.PackageValue(pkg)
 		rt.m.RememberPackage(path, exp)
