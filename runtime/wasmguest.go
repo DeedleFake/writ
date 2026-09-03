@@ -24,7 +24,7 @@ func guestForeignHandle(id uint64) Value {
 	if isGuestHandleID(id) {
 		return Value{}
 	}
-	return WireHandle(id)
+	return newWireHandle(id)
 }
 
 func dispatchGuestFunc(name string, args []Value) (Value, error) {

@@ -52,7 +52,7 @@ func isGuestHandleID(id uint64) bool { return id&guestHandleBit != 0 }
 type wireHandle struct{ id uint64 }
 
 // WireHandle boxes a peer handle id as a Native value.
-func WireHandle(id uint64) Value {
+func newnewWireHandle(id uint64) Value {
 	return Native(&wireHandle{id: id})
 }
 

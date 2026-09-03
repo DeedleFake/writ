@@ -15,7 +15,7 @@ func TestGuestNativeHandleRoundTrip(t *testing.T) {
 		if v, ok := proxies[id]; ok {
 			return v
 		}
-		v := WireHandle(id)
+		v := newWireHandle(id)
 		proxies[id] = v
 		return v
 	}
@@ -23,7 +23,7 @@ func TestGuestNativeHandleRoundTrip(t *testing.T) {
 		if isGuestHandleID(id) {
 			return Value{}
 		}
-		return WireHandle(id)
+		return newWireHandle(id)
 	}
 
 	orig := Native(&box{n: 7})
@@ -124,7 +124,7 @@ func TestStampedCrossPeerPassThrough(t *testing.T) {
 		if isGuestHandleID(id) {
 			return Value{}
 		}
-		return WireHandle(id)
+		return newWireHandle(id)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -152,7 +152,7 @@ func TestStampedCrossPeerPassThrough(t *testing.T) {
 		if isGuestHandleID(id) {
 			return Value{}
 		}
-		return WireHandle(id)
+		return newWireHandle(id)
 	})
 	if err != nil {
 		t.Fatal(err)
