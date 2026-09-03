@@ -508,6 +508,26 @@ func (v Value) As(dst any) bool {
 	return true
 }
 
+// AsType type-asserts a KindNative value to T.
+// Prefer it over [Value.As] when T is known at compile time.
+func (v Value) AsType[T any]() (T, bool) {
+	var zero T
+	if v.k != KindNative {
+		return zero, false
+	}
+	if v.p == nil {
+		rt := reflect.TypeOf(&zero).Elem()
+		switch rt.Kind() {
+		case reflect.Interface, reflect.Pointer, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan, reflect.UnsafePointer:
+			return zero, true
+		default:
+			return zero, false
+		}
+	}
+	out, ok := v.p.(T)
+	return out, ok
+}
+
 func (v Value) isKeySym() bool {
 	if v.k != KindSymbol {
 		return false
