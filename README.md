@@ -74,13 +74,14 @@ Each key is the local name; each value is a path expression. Keyed `import` must
 
 Relative paths are resolved from the importing file. Search directories can be set on the runtime (`WithSearchPath`) or with `writ run -I DIR` / `writ check -I DIR` / `writ repl -I DIR`.
 
-Resolution order for a path without a known suffix:
+An import string is either a `RegisterPackage` name or a filesystem path with an explicit `.writ` or `.wasm` suffix. Writ does not invent a suffix for bare paths.
 
-1. An in-process package registered with `RegisterPackage`
-2. A `.writ` file under the importing file's directory and `WithSearchPath` (cwd is used only when there is no importing file and no search path)
-3. A `.wasm` module in those same directories. WASM packages are sandboxed (no WASI preopens, no filesystem or network) and load by default, including during `check`
+Resolution order:
 
-Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbsoluteImports` is set. Unknown suffixes (including `.so`) are rejected like a missing import. Untrusted `Eval` should set an explicit search path. The default unlimited eval budget is not a sandbox.
+1. An in-process package registered with `RegisterPackage` (any name, including names without a suffix)
+2. A `.writ` or `.wasm` path under the importing file's directory and `WithSearchPath` (cwd is used only when there is no importing file and no search path). WASM packages are sandboxed (no WASI preopens, no filesystem or network) and load by default, including during `check`
+
+Absolute paths and `..` that leave those roots are rejected unless `WithAllowAbsoluteImports` is set. Unknown suffixes (including `.so`) and bare paths that are not registered packages are rejected. Untrusted `Eval` should set an explicit search path. The default unlimited eval budget is not a sandbox.
 
 ```
 (let [lib: (import "lib.writ")]

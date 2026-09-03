@@ -449,6 +449,35 @@ func TestHostBuiltinCanGetProp(t *testing.T) {
 	}
 }
 
+func TestImportRequiresSuffix(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "lib.writ"), []byte("(def (n) 1)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	use := filepath.Join(dir, "use.writ")
+	if err := os.WriteFile(use, []byte(`(import "lib")`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := New().EvalFile(use)
+	if err == nil {
+		t.Fatal("expected bare import to fail")
+	}
+	if !strings.Contains(err.Error(), "suffix") {
+		t.Fatalf("want suffix error, got %v", err)
+	}
+	rt := New()
+	rt.RegisterPackage("lib", runtime.Package{
+		Vals: map[string]runtime.Value{"n": runtime.Int64(7)},
+	})
+	v, err := rt.Eval(rd(`(map-get (import "lib") 'n)`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(7)) {
+		t.Fatalf("RegisterPackage bare name: %v", v)
+	}
+}
+
 func TestImportRejectsNonWrit(t *testing.T) {
 	dir := t.TempDir()
 	body := "(def (n) 1)\n"

@@ -99,6 +99,9 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 		return spec, "pkg", nil
 	}
 	ext := strings.ToLower(filepath.Ext(spec))
+	if ext == "" {
+		return "", "", runtime.Errorf("import %q needs a .writ or .wasm suffix", spec)
+	}
 	absSpec := filepath.IsAbs(spec)
 	if absSpec && !rt.allowAbsolute {
 		return "", "", runtime.ErrorMsg("absolute import paths are disabled")
@@ -118,13 +121,6 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 				candidates = append(candidates, filepath.Join(wd, spec))
 			}
 		}
-	}
-	if ext == "" {
-		var more []string
-		for _, c := range candidates {
-			more = append(more, c+".writ", c+".wasm")
-		}
-		candidates = append(candidates, more...)
 	}
 	roots := rt.importRoots(fromFile)
 	tryFile := func(p string) (string, string, bool) {
