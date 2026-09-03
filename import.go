@@ -41,6 +41,15 @@ func (rt *Runtime) loadImport(spec, fromFile string) (runtime.Value, error) {
 		rt.m.RememberPackage(path, exp)
 		return exp, nil
 	}
+	if kind == "wasm" {
+		pkg, err := runtime.LoadWasm(path)
+		if err != nil {
+			return runtime.Value{}, err
+		}
+		exp := runtime.PackageValue(pkg)
+		rt.m.RememberPackage(path, exp)
+		return exp, nil
+	}
 	f, err := os.Open(path)
 	if err != nil {
 		return runtime.Value{}, err
@@ -65,6 +74,10 @@ func pluginExt(ext string) bool {
 	default:
 		return false
 	}
+}
+
+func wasmExt(ext string) bool {
+	return strings.ToLower(ext) == ".wasm"
 }
 
 func (rt *Runtime) importRoots(fromFile string) []string {
@@ -133,7 +146,7 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 	if ext == "" {
 		var more []string
 		for _, c := range candidates {
-			more = append(more, c+".writ")
+			more = append(more, c+".writ", c+".wasm")
 			if rt.nativePlugins && runtime.PluginsSupported() {
 				more = append(more, c+".so", c+".dylib", c+".dll")
 			}
@@ -161,6 +174,8 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 				return "", "", false
 			}
 			k = "plugin"
+		case wasmExt(e):
+			k = "wasm"
 		case e != ".writ":
 			return "", "", false
 		}
@@ -181,11 +196,17 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 }
 
 func packageType(p runtime.Package) types.Type {
-	keys := make([]string, 0, len(p.Funcs)+len(p.Vals))
+	keys := make([]string, 0, len(p.Funcs)+len(p.Vals)+len(p.Macros))
 	seen := map[string]struct{}{}
 	for k := range p.Funcs {
 		keys = append(keys, k)
 		seen[k] = struct{}{}
+	}
+	for k := range p.Macros {
+		if _, ok := seen[k]; !ok {
+			keys = append(keys, k)
+			seen[k] = struct{}{}
+		}
 	}
 	for k := range p.Vals {
 		if _, ok := seen[k]; !ok {
@@ -196,7 +217,32 @@ func packageType(p runtime.Package) types.Type {
 	fields := make([]types.ArrowKey, 0, len(keys))
 	for _, k := range keys {
 		t := types.Any()
-		if _, ok := p.Funcs[k]; ok {
+		_, isFn := p.Funcs[k]
+		_, isMac := p.Macros[k]
+		if isFn || isMac {
+			t = types.FnType(types.PosRestArrow(types.Dynamic(types.Any())))
+		}
+		fields = append(fields, types.ArrowKey{Name: k, Type: t})
+	}
+	return types.MapType(fields, nil)
+}
+
+func mapExportType(v runtime.Value) types.Type {
+	if v.Kind() != runtime.KindMap {
+		anyT := types.Any()
+		return types.Dynamic(types.MapType(nil, &anyT))
+	}
+	pairs := v.Pairs()
+	keys := make([]string, 0, len(pairs))
+	for _, p := range pairs {
+		keys = append(keys, p.Key.Name())
+	}
+	sort.Strings(keys)
+	fields := make([]types.ArrowKey, 0, len(keys))
+	for _, k := range keys {
+		val, _ := v.MapGet(k)
+		t := types.Any()
+		if val.Kind() == runtime.KindFn || val.Kind() == runtime.KindMacro {
 			t = types.FnType(types.PosRestArrow(types.Dynamic(types.Any())))
 		}
 		fields = append(fields, types.ArrowKey{Name: k, Type: t})
@@ -226,6 +272,19 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 	if kind == "plugin" {
 		anyT := types.Any()
 		return types.Dynamic(types.MapType(nil, &anyT)), nil, nil
+	}
+	if kind == "wasm" {
+		if exp, ok := rt.m.Loaded(path); ok {
+			return mapExportType(exp), nil, nil
+		}
+		pkg, err := runtime.LoadWasm(path)
+		if err != nil {
+			anyT := types.Any()
+			return types.Dynamic(types.MapType(nil, &anyT)), nil, nil
+		}
+		exp := runtime.PackageValue(pkg)
+		rt.m.RememberPackage(path, exp)
+		return packageType(pkg), nil, nil
 	}
 	f, err := os.Open(path)
 	if err != nil {
