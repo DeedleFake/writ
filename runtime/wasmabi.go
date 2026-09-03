@@ -7,8 +7,7 @@ func ExportGuestPackage(p Package) {
 	guestPkg = p
 }
 
-// DispatchGuestCall runs a func (kind 0) or macro (kind 1) from the guest package.
-func DispatchGuestCall(kind int32, name string, args []Value) (Value, error) {
+func dispatchGuestCall(kind int32, name string, args []Value) (Value, error) {
 	switch kind {
 	case callKindFunc:
 		f, ok := guestPkg.Funcs[name]

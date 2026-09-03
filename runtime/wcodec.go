@@ -476,7 +476,7 @@ func EncodePackageTable(p Package, ht *HandleTable) ([]byte, error) {
 	for k := range p.Vals {
 		names = append(names, k)
 	}
-	sortStrings(names)
+	sort.Strings(names)
 	for _, n := range names {
 		ents = append(ents, entry{kind: pkgKindVal, name: n, val: p.Vals[n]})
 	}
@@ -484,7 +484,7 @@ func EncodePackageTable(p Package, ht *HandleTable) ([]byte, error) {
 	for k := range p.Funcs {
 		names = append(names, k)
 	}
-	sortStrings(names)
+	sort.Strings(names)
 	for _, n := range names {
 		ents = append(ents, entry{kind: pkgKindFunc, name: n})
 	}
@@ -492,7 +492,7 @@ func EncodePackageTable(p Package, ht *HandleTable) ([]byte, error) {
 	for k := range p.Macros {
 		names = append(names, k)
 	}
-	sortStrings(names)
+	sort.Strings(names)
 	for _, n := range names {
 		ents = append(ents, entry{kind: pkgKindMacro, name: n})
 	}
@@ -549,5 +549,3 @@ func DecodePackageTable(r io.Reader, ht *HandleTable) (Package, error) {
 	}
 	return p, nil
 }
-
-func sortStrings(xs []string) { sort.Strings(xs) }

@@ -46,7 +46,7 @@ func guestWritCall(kind, namePtr, nameLen, argsPtr, argsLen int32) int32 {
 	if argsVal.k != KindList {
 		return retainGuest(EncodeABIError("args must be a list"))
 	}
-	result, err := DispatchGuestCall(kind, name, argsVal.Items())
+	result, err := dispatchGuestCall(kind, name, argsVal.Items())
 	if err != nil {
 		return retainGuest(EncodeABIError(err.Error()))
 	}
