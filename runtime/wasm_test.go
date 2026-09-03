@@ -62,3 +62,41 @@ func TestLoadWasmHello(t *testing.T) {
 		t.Fatalf("unless frags: %v", frags)
 	}
 }
+
+func TestLoadWasmCrossPackageOpaque(t *testing.T) {
+	wasm := filepath.Join(t.TempDir(), "a.wasm")
+	cmd := exec.Command("go", "build", "-buildmode=c-shared", "-o", wasm, "../example/wasmhello")
+	cmd.Env = append(os.Environ(), "GOOS=wasip1", "GOARCH=wasm")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Skipf("wasip1 c-shared build failed (common in tests): %s", out)
+	}
+	pkgA, err := LoadWasm(wasm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkgB, err := LoadWasm(wasm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := pkgA.Funcs["mk"](nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	passed, err := pkgB.Funcs["echo"]([]Value{c})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := passed.As[*struct{}](); ok {
+		t.Fatal("stranger must not unwrap")
+	}
+	if _, err := pkgA.Funcs["inc"]([]Value{passed}); err != nil {
+		t.Fatal(err)
+	}
+	n, err := pkgA.Funcs["get"]([]Value{passed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !n.Equal(Int64(1)) {
+		t.Fatalf("after echo+inc: %v", n)
+	}
+}

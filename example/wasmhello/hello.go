@@ -19,6 +19,7 @@ func init() {
 			"mk":    mkBox,
 			"inc":   incBox,
 			"get":   getBox,
+			"echo":  echoVal,
 		},
 		Macros: map[string]runtime.Macro{
 			"unless": unless,
@@ -33,6 +34,13 @@ type box struct{ n int64 }
 
 func mkBox(args []runtime.Value) (runtime.Value, error) {
 	return runtime.Native(&box{}), nil
+}
+
+func echoVal(args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 {
+		return runtime.Nil, nil
+	}
+	return args[0], nil
 }
 
 func incBox(args []runtime.Value) (runtime.Value, error) {

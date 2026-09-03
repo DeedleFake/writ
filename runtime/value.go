@@ -589,6 +589,9 @@ func printNative(p any) string {
 		}
 		return "#<handle host>"
 	}
+	if reflect.TypeOf(p).String() == "*runtime.guestRef" {
+		return "#<handle guest>"
+	}
 	return "#<native " + reflect.TypeOf(p).String() + ">"
 }
 

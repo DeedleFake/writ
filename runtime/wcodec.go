@@ -129,9 +129,21 @@ func (t *HandleTable) Drop(id uint64) {
 	delete(t.vals, id)
 }
 
+// HandlePeer maps opaque Values to wire handle ids for one destination.
+// Used by the WASM host so a guest-owned ref encodes as that guest's local
+// id, while a foreign guest ref is imported into the destination's table.
+type HandlePeer interface {
+	HandleID(v Value) (uint64, bool)
+}
+
 // Encode writes v in the tagged binary format.
 func Encode(v Value, ht *HandleTable) ([]byte, error) {
-	var e enc
+	return EncodePeer(v, ht, nil)
+}
+
+// EncodePeer is Encode with a destination-specific opaque id mapper.
+func EncodePeer(v Value, ht *HandleTable, peer HandlePeer) ([]byte, error) {
+	e := enc{peer: peer}
 	if err := e.value(v, ht); err != nil {
 		return nil, err
 	}
@@ -161,7 +173,8 @@ func DecodeReaderForeign(r io.Reader, ht *HandleTable, foreign func(uint64) Valu
 }
 
 type enc struct {
-	buf []byte
+	buf  []byte
+	peer HandlePeer
 }
 
 func (e *enc) u8(v byte) { e.buf = append(e.buf, v) }
@@ -256,6 +269,13 @@ func (e *enc) value(v Value, ht *HandleTable) error {
 		}
 		return e.form(f)
 	case KindFn, KindMacro, KindNative:
+		if e.peer != nil {
+			if id, ok := e.peer.HandleID(v); ok {
+				e.u8(tagHandle)
+				e.u64(id)
+				return nil
+			}
+		}
 		if id, ok := wireHandleID(v); ok {
 			e.u8(tagHandle)
 			e.u64(id)
