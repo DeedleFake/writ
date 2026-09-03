@@ -10,6 +10,7 @@ import (
 	"unique"
 
 	"deedles.dev/writ/scanner"
+	"deedles.dev/writ/syntax"
 )
 
 // Kind is the runtime kind of a [Value].
@@ -26,6 +27,7 @@ const (
 	KindFn
 	KindMacro
 	KindNative
+	KindSyntax
 )
 
 func (k Kind) String() string {
@@ -48,6 +50,8 @@ func (k Kind) String() string {
 		return "macro"
 	case KindNative:
 		return "native"
+	case KindSyntax:
+		return "syntax"
 	default:
 		return "invalid"
 	}
@@ -71,7 +75,7 @@ type Value struct {
 	n   int64 // small int, or float64 bits
 	s   string
 	h   unique.Handle[string]
-	p   any      // list, map, fn, *big.Int, native
+	p   any      // list, map, fn, *big.Int, native, syntax.Form
 	src *srcInfo // nil for synthetic values
 }
 
@@ -222,6 +226,12 @@ func CallList(xs ...Value) Value {
 // Native boxes a host object. Native values are opaque to Writ.
 func Native(v any) Value {
 	return Value{k: KindNative, p: v}
+}
+
+// Syntax boxes a source form as a runtime value. Nested quote residuals
+// use this instead of (quote …) lists.
+func Syntax(f syntax.Form) Value {
+	return Value{k: KindSyntax, p: f}
 }
 
 // MapFrom builds a map from pairs. Later keys win.
@@ -459,6 +469,15 @@ func (v Value) Native() (any, bool) {
 	return v.p, true
 }
 
+// Form returns the boxed source form.
+func (v Value) Form() (syntax.Form, bool) {
+	if v.k != KindSyntax {
+		return syntax.Form{}, false
+	}
+	f, _ := v.p.(syntax.Form)
+	return f, true
+}
+
 // As type-asserts a native value into dst, which must be a non-nil *T.
 func (v Value) As(dst any) bool {
 	if v.k != KindNative || dst == nil {
@@ -616,6 +635,11 @@ func printVal(v Value) string {
 		return "#<macro>"
 	case KindNative:
 		return printNative(v.p)
+	case KindSyntax:
+		if f, ok := v.Form(); ok {
+			return syntax.Print(f)
+		}
+		return "#<syntax>"
 	case KindList:
 		xs := v.Items()
 		var b strings.Builder
@@ -675,6 +699,10 @@ func (v Value) Equal(o Value) bool {
 		return false
 	case KindNative:
 		return nativeEqual(v.p, o.p)
+	case KindSyntax:
+		af, aok := v.Form()
+		bf, bok := o.Form()
+		return aok && bok && af.Equal(bf)
 	case KindList:
 		xs, ys := v.Items(), o.Items()
 		if len(xs) != len(ys) {

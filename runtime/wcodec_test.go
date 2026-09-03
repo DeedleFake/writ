@@ -240,12 +240,17 @@ func TestWcodecForm(t *testing.T) {
 	}
 }
 
-func TestWcodecValueRejectsFormTags(t *testing.T) {
-	b, err := EncodeForm(syntax.Quote(syntax.Symbol("x")))
+func TestWcodecValueSyntaxRoundTrip(t *testing.T) {
+	want := Syntax(syntax.Quote(syntax.Symbol("x")))
+	b, err := Encode(want, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Decode(b, nil); err == nil {
-		t.Fatal("value decode of quote tag")
+	got, err := Decode(b, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Equal(want) {
+		t.Fatalf("syntax round-trip: got %v want %v", got, want)
 	}
 }

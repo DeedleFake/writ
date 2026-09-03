@@ -7,6 +7,8 @@ import (
 	"math/big"
 	"sort"
 	"sync"
+
+	"deedles.dev/writ/syntax"
 )
 
 const (
@@ -200,6 +202,12 @@ func (e *enc) value(v Value, ht *HandleTable) error {
 			}
 		}
 		return nil
+	case KindSyntax:
+		f, ok := v.Form()
+		if !ok {
+			return errMsg("invalid syntax value")
+		}
+		return e.form(f)
 	case KindFn, KindMacro, KindNative:
 		if ht == nil {
 			return errMsg("handle table required")
@@ -374,8 +382,30 @@ func (d *dec) value(ht *HandleTable) (Value, error) {
 			pairs[i] = MapPair{Key: k, Value: val}
 		}
 		return MapFrom(pairs...), nil
-	case tagQuote, tagUnquote, tagSplice, tagComment:
-		return Value{}, errMsg("quote, unquote, splice, and comment are forms, not values")
+	case tagQuote:
+		inner, err := d.form()
+		if err != nil {
+			return Value{}, err
+		}
+		return Syntax(syntax.Quote(inner)), nil
+	case tagUnquote:
+		inner, err := d.form()
+		if err != nil {
+			return Value{}, err
+		}
+		return Syntax(syntax.Unquote(inner)), nil
+	case tagSplice:
+		inner, err := d.form()
+		if err != nil {
+			return Value{}, err
+		}
+		return Syntax(syntax.Splice(inner)), nil
+	case tagComment:
+		s, err := d.str()
+		if err != nil {
+			return Value{}, err
+		}
+		return Syntax(syntax.Comment(s)), nil
 	case tagHandle:
 		id, err := d.u64()
 		if err != nil {

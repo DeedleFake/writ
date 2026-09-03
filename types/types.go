@@ -1075,6 +1075,8 @@ func kindOf(v runtime.Value) Type {
 			return nativeOf(nil)
 		}
 		return nativeOf(reflect.TypeOf(nv))
+	case runtime.KindSyntax:
+		return Any()
 	default:
 		return Any()
 	}

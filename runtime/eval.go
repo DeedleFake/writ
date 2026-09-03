@@ -280,20 +280,20 @@ func evalQuote(v syntax.Form, env *env, c *ctx, depth int) (Value, error) {
 		if err != nil {
 			return Value{}, err
 		}
-		return CallList(Symbol("unquote"), inner), nil
+		return Syntax(syntax.Unquote(formFromResidual(inner))), nil
 	case syntax.KindQuote:
 		inner, err := evalQuote(v.Inner(), env, c, depth+1)
 		if err != nil {
 			return Value{}, err
 		}
-		return CallList(Symbol("quote"), inner), nil
+		return Syntax(syntax.Quote(formFromResidual(inner))), nil
 	case syntax.KindSplice:
 		if depth != 1 {
 			inner, err := evalQuote(v.Inner(), env, c, depth)
 			if err != nil {
 				return Value{}, err
 			}
-			return CallList(Symbol("splice"), inner), nil
+			return Syntax(syntax.Splice(formFromResidual(inner))), nil
 		}
 		inner, err := spliceInner(v.Inner(), env, c, true)
 		if err != nil {

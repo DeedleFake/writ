@@ -18,11 +18,9 @@ func stampVal(v Value, f syntax.Form) Value {
 	return v
 }
 
-// FormFromValue embeds a runtime value into a source form. Nested quote
-// residual lists (quote x) / (unquote x) / (splice x) become Quote,
-// Unquote, and Splice forms so (eval ”x) still quotes. Functions,
-// macros, and native values cannot be represented as forms; they become
-// an invalid form.
+// FormFromValue embeds a runtime value into a source form. KindSyntax
+// unwraps to its form. Functions, macros, and native values cannot be
+// represented as forms; they become an invalid form.
 func FormFromValue(v Value) syntax.Form {
 	return stampForm(formFromValue(v), v)
 }
@@ -40,21 +38,16 @@ func formFromValue(v Value) syntax.Form {
 		return syntax.String(v.s)
 	case KindSymbol:
 		return syntax.Symbol(v.Name())
+	case KindSyntax:
+		if f, ok := v.Form(); ok {
+			return f
+		}
+		return syntax.Form{}
 	case KindList:
 		xs := v.Items()
 		out := make([]syntax.Form, len(xs))
 		for i, x := range xs {
 			out[i] = FormFromValue(x)
-		}
-		if !v.IsVec() && len(out) == 2 && out[0].Kind() == syntax.KindSymbol {
-			switch out[0].Name() {
-			case "quote":
-				return syntax.Quote(out[1])
-			case "unquote":
-				return syntax.Unquote(out[1])
-			case "splice":
-				return syntax.Splice(out[1])
-			}
 		}
 		if v.IsVec() {
 			return syntax.List(out...)
@@ -73,8 +66,8 @@ func formFromValue(v Value) syntax.Form {
 }
 
 // ValueFromLiteralForm converts int/float/string/symbol/list/map forms
-// to values. Quote/unquote/splice become (quote …) / (unquote …) /
-// (splice …) lists. Comments become nil.
+// to values. Quote/unquote/splice become KindSyntax values holding the
+// form. Comments become nil.
 func ValueFromLiteralForm(f syntax.Form) Value {
 	return stampVal(valueFromLiteralForm(f), f)
 }
@@ -112,17 +105,20 @@ func valueFromLiteralForm(f syntax.Form) Value {
 			pairs = append(pairs, MapPair{Key: Symbol(p.Key.Name()), Value: ValueFromLiteralForm(p.Value)})
 		}
 		return MapFrom(pairs...)
-	case syntax.KindQuote:
-		return CallList(Symbol("quote"), ValueFromLiteralForm(f.Inner()))
-	case syntax.KindUnquote:
-		return CallList(Symbol("unquote"), ValueFromLiteralForm(f.Inner()))
-	case syntax.KindSplice:
-		return CallList(Symbol("splice"), ValueFromLiteralForm(f.Inner()))
+	case syntax.KindQuote, syntax.KindUnquote, syntax.KindSplice:
+		return Syntax(f)
 	case syntax.KindComment:
 		return Nil
 	default:
 		return Value{}
 	}
+}
+
+func formFromResidual(v Value) syntax.Form {
+	if f, ok := v.Form(); ok {
+		return f
+	}
+	return FormFromValue(v)
 }
 
 func formSpan(f syntax.Form) (start, end int, ok bool) {
