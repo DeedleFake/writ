@@ -119,7 +119,7 @@ _ = rt.Fire("tick", map[string]runtime.Value{"n": runtime.Int64(1)})
 res := rt.Check(strings.NewReader(src)) // diagnostics and type hints
 ```
 
-A WASM package is a WASI reactor (`GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared`) that exports `writ_abi`, `writ_alloc`, `writ_package`, and `writ_call`. See `example/wasmhello`.
+A WASM package is a WASI reactor that exports `writ_abi`, `writ_alloc`, `writ_package`, and `writ_call`. Go: `GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared` (`example/wasmhello`). Rust: `cargo build --target wasm32-wasip1 --release` (`example/wasmhello-rust`).
 
 Opaque `Native` values created inside a WASM package round-trip through the host as handles: the guest keeps the Go object; the host sees `KindNative` it cannot `As` into a guest type. Passing the handle into another WASM package is allowed (pass-through); only the owning package can `As` / mutate it.
 
