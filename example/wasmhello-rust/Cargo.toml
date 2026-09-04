@@ -1,0 +1,13 @@
+[package]
+name = "wasmhello-rust"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Writ WASM package example in Rust (same surface as example/wasmhello)"
+
+[lib]
+crate-type = ["cdylib"]
+
+[profile.release]
+lto = true
+opt-level = "s"

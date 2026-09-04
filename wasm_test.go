@@ -172,3 +172,80 @@ func TestWasmOpaqueBox(t *testing.T) {
 		t.Fatalf("box: %v", v)
 	}
 }
+
+func buildWasmHelloRust(t *testing.T) string {
+	t.Helper()
+	if _, err := exec.LookPath("cargo"); err != nil {
+		t.Skip("cargo not installed")
+	}
+	dir := t.TempDir()
+	wasm := filepath.Join(dir, "wasmhello_rust.wasm")
+	cmd := exec.Command("cargo", "build", "--target", "wasm32-wasip1", "--release", "--manifest-path", "example/wasmhello-rust/Cargo.toml")
+	cmd.Env = append(os.Environ(), "CARGO_TARGET_DIR="+filepath.Join(dir, "target"))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Skipf("rust wasm build failed: %v\n%s", err, out)
+	}
+	built := filepath.Join(dir, "target", "wasm32-wasip1", "release", "wasmhello_rust.wasm")
+	data, err := os.ReadFile(built)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(wasm, data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return wasm
+}
+
+func TestWasmRustHello(t *testing.T) {
+	wasm := buildWasmHelloRust(t)
+	rt := New(WithAllowAbsoluteImports())
+	src := `(let [m: (import "` + filepath.ToSlash(wasm) + `")]
+  (m.greet "rust"))`
+	v, err := rt.Eval(rd(src))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Text() != "hello, rust" {
+		t.Fatalf("greet: %v", v)
+	}
+	v, err = rt.Eval(rd(`(map-get (import "` + filepath.ToSlash(wasm) + `") 'version)`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(1)) {
+		t.Fatalf("version: %v", v)
+	}
+	dir := t.TempDir()
+	srcPath := filepath.Join(dir, "use.writ")
+	body := "(import m: \"" + filepath.ToSlash(wasm) + "\")\n(m.unless false 42)\n"
+	if err := os.WriteFile(srcPath, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	v, err = rt.EvalFile(srcPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(42)) {
+		t.Fatalf("unless: %v", v)
+	}
+	v, err = rt.Eval(rd(`(let [m: (import "` + filepath.ToSlash(wasm) + `")]
+  (let [c: (m.mk)]
+    (m.inc c)
+    (m.inc c)
+    (m.get c)))`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(2)) {
+		t.Fatalf("box: %v", v)
+	}
+	v, err = rt.Eval(rd(`(let [m: (import "` + filepath.ToSlash(wasm) + `")]
+  (m.echo (m.mk)))`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Kind() != runtime.KindNative {
+		t.Fatalf("echo box kind: %v", v.Kind())
+	}
+}
