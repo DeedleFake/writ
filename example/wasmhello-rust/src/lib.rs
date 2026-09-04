@@ -1,4 +1,5 @@
-//! Writ WASM guest example (greet / unless / version), matching `example/wasmhello`.
+//! Writ WASM guest example matching `example/wasmhello`
+//! (`greet` / `unless` / `version` / `mk` / `inc` / `get` / `echo`).
 //!
 //! Build:
 //!
@@ -8,12 +9,14 @@
 //!
 //! The `.wasm` is at `target/wasm32-wasip1/release/wasmhello_rust.wasm`.
 
-use std::sync::Mutex;
+use std::collections::HashMap;
+use std::sync::{Arc, LazyLock, Mutex};
 
 const TAG_INT: u8 = 1;
 const TAG_STRING: u8 = 3;
 const TAG_SYMBOL: u8 = 4;
 const TAG_LIST: u8 = 5;
+const TAG_HANDLE: u8 = 11;
 const TAG_ERROR: u8 = 0xff;
 const INT_I64: u8 = 0;
 
@@ -24,8 +27,40 @@ const PKG_MACRO: u8 = 2;
 const CALL_FUNC: i32 = 0;
 const CALL_MACRO: i32 = 1;
 
+/// Matches runtime.guestHandleBit: guest-allocated handle ids set bit 63.
+const GUEST_HANDLE_BIT: u64 = 1 << 63;
+
 static ALLOCS: Mutex<Vec<Vec<u8>>> = Mutex::new(Vec::new());
 static RET: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+/// Guest box cells; Put may alias one Arc under several ids.
+static BOXES: LazyLock<Mutex<GuestBoxes>> = LazyLock::new(|| {
+    Mutex::new(GuestBoxes {
+        next: 1,
+        cells: HashMap::new(),
+    })
+});
+
+struct GuestBoxes {
+    next: u64,
+    cells: HashMap<u64, Arc<Mutex<i64>>>,
+}
+
+impl GuestBoxes {
+    fn put(&mut self, cell: Arc<Mutex<i64>>) -> u64 {
+        if self.next == 0 {
+            self.next = 1;
+        }
+        let id = self.next | GUEST_HANDLE_BIT;
+        self.next += 1;
+        self.cells.insert(id, cell);
+        id
+    }
+
+    fn get(&self, id: u64) -> Option<Arc<Mutex<i64>>> {
+        self.cells.get(&id).cloned()
+    }
+}
 
 #[derive(Clone)]
 enum Form {
@@ -36,6 +71,7 @@ enum Form {
     Vec(Vec<Form>),
 }
 
+/// Box = guest opaque; Wire = peer handle (echo passthrough).
 #[derive(Clone)]
 enum Val {
     Int(i64),
@@ -43,6 +79,8 @@ enum Val {
     Symbol(String),
     Call(Vec<Val>),
     Vec(Vec<Val>),
+    Box(u64),
+    Wire(u64),
 }
 
 struct R<'a> {
@@ -135,6 +173,20 @@ impl W {
                     self.enc_val(x)?;
                 }
             }
+            Val::Box(id) => {
+                // Like Go Encode(Native): Put again; new id aliases the same cell.
+                let mut boxes = BOXES.lock().unwrap();
+                let cell = boxes
+                    .get(*id)
+                    .ok_or_else(|| format!("missing handle {id}"))?;
+                let new_id = boxes.put(cell);
+                self.u8(TAG_HANDLE);
+                self.u64(new_id);
+            }
+            Val::Wire(id) => {
+                self.u8(TAG_HANDLE);
+                self.u64(*id);
+            }
         }
         Ok(())
     }
@@ -181,13 +233,21 @@ fn dec_val(r: &mut R<'_>) -> Result<Val, String> {
             let vec = r.u8()?;
             let n = r.u32()? as usize;
             let mut xs = Vec::with_capacity(n);
-            for _ in range(n) {
+            for _ in 0..n {
                 xs.push(dec_val(r)?);
             }
             if vec == 1 {
                 Ok(Val::Vec(xs))
             } else {
                 Ok(Val::Call(xs))
+            }
+        }
+        TAG_HANDLE => {
+            let id = r.u64()?;
+            if BOXES.lock().unwrap().get(id).is_some() {
+                Ok(Val::Box(id))
+            } else {
+                Ok(Val::Wire(id))
             }
         }
         t => Err(format!("val tag {t}")),
@@ -209,7 +269,7 @@ fn dec_form(r: &mut R<'_>) -> Result<Form, String> {
             let vec = r.u8()?;
             let n = r.u32()? as usize;
             let mut xs = Vec::with_capacity(n);
-            for _ in range(n) {
+            for _ in 0..n {
                 xs.push(dec_form(r)?);
             }
             if vec == 1 {
@@ -222,10 +282,6 @@ fn dec_form(r: &mut R<'_>) -> Result<Form, String> {
     }
 }
 
-fn range(n: usize) -> impl Iterator<Item = usize> {
-    0..n
-}
-
 fn enc_err(msg: &str) -> Vec<u8> {
     let mut w = W::new();
     w.u8(TAG_ERROR);
@@ -235,13 +291,15 @@ fn enc_err(msg: &str) -> Vec<u8> {
 
 fn package_table() -> Vec<u8> {
     let mut w = W::new();
-    // vals, funcs, macros — sorted names within each kind
-    w.u32(3);
+    // vals, funcs, macros; names sorted within each kind.
+    w.u32(7);
     w.u8(PKG_VAL);
     w.str("version");
     w.enc_val(&Val::Int(1)).unwrap();
-    w.u8(PKG_FUNC);
-    w.str("greet");
+    for name in ["echo", "get", "greet", "inc", "mk"] {
+        w.u8(PKG_FUNC);
+        w.str(name);
+    }
     w.u8(PKG_MACRO);
     w.str("unless");
     w.b
@@ -253,6 +311,42 @@ fn greet(args: &[Val]) -> Result<Val, String> {
         _ => "world",
     };
     Ok(Val::String(format!("hello, {name}")))
+}
+
+fn mk_box(_args: &[Val]) -> Result<Val, String> {
+    let cell = Arc::new(Mutex::new(0_i64));
+    let id = BOXES.lock().unwrap().put(cell);
+    Ok(Val::Box(id))
+}
+
+fn echo_val(args: &[Val]) -> Result<Val, String> {
+    Ok(args.first().cloned().unwrap_or(Val::Symbol("nil".into())))
+}
+
+fn inc_box(args: &[Val]) -> Result<Val, String> {
+    let Val::Box(id) = args.first().ok_or("want box")? else {
+        return Err("want box".into());
+    };
+    let cell = BOXES
+        .lock()
+        .unwrap()
+        .get(*id)
+        .ok_or("want box")?;
+    *cell.lock().unwrap() += 1;
+    Ok(Val::Box(*id))
+}
+
+fn get_box(args: &[Val]) -> Result<Val, String> {
+    let Val::Box(id) = args.first().ok_or("want box")? else {
+        return Err("want box".into());
+    };
+    let cell = BOXES
+        .lock()
+        .unwrap()
+        .get(*id)
+        .ok_or("want box")?;
+    let n = *cell.lock().unwrap();
+    Ok(Val::Int(n))
 }
 
 fn unless(args: &[Form]) -> Result<Form, String> {
@@ -268,13 +362,11 @@ fn unless(args: &[Form]) -> Result<Form, String> {
 }
 
 fn retain(b: Vec<u8>) -> i32 {
-    if b.is_empty() {
-        let mut g = RET.lock().unwrap();
-        *g = b;
-        return 0;
-    }
     let mut g = RET.lock().unwrap();
     *g = b;
+    if g.is_empty() {
+        return 0;
+    }
     g.as_ptr() as i32
 }
 
@@ -309,7 +401,13 @@ pub extern "C" fn writ_package() -> i32 {
 }
 
 #[no_mangle]
-pub extern "C" fn writ_call(kind: i32, name_ptr: i32, name_len: i32, args_ptr: i32, args_len: i32) -> i32 {
+pub extern "C" fn writ_call(
+    kind: i32,
+    name_ptr: i32,
+    name_len: i32,
+    args_ptr: i32,
+    args_len: i32,
+) -> i32 {
     // Copy name/args out before dropping host writ_alloc buffers.
     let name = String::from_utf8_lossy(&read_guest(name_ptr, name_len)).into_owned();
     let args_blob = read_guest(args_ptr, args_len);
@@ -337,10 +435,14 @@ pub extern "C" fn writ_call(kind: i32, name_ptr: i32, name_len: i32, args_ptr: i
         let Val::Call(items) = args else {
             return Err("args must be a list".into());
         };
-        if name != "greet" {
-            return Err(format!("unknown func {name}"));
-        }
-        let result = greet(&items)?;
+        let result = match name.as_str() {
+            "greet" => greet(&items)?,
+            "mk" => mk_box(&items)?,
+            "inc" => inc_box(&items)?,
+            "get" => get_box(&items)?,
+            "echo" => echo_val(&items)?,
+            _ => return Err(format!("unknown func {name}")),
+        };
         let mut w = W::new();
         w.enc_val(&result)?;
         Ok(w.b)

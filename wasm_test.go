@@ -229,4 +229,23 @@ func TestWasmRustHello(t *testing.T) {
 	if !v.Equal(runtime.Int64(42)) {
 		t.Fatalf("unless: %v", v)
 	}
+	v, err = rt.Eval(rd(`(let [m: (import "` + filepath.ToSlash(wasm) + `")]
+  (let [c: (m.mk)]
+    (m.inc c)
+    (m.inc c)
+    (m.get c)))`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.Equal(runtime.Int64(2)) {
+		t.Fatalf("box: %v", v)
+	}
+	v, err = rt.Eval(rd(`(let [m: (import "` + filepath.ToSlash(wasm) + `")]
+  (m.echo (m.mk)))`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if v.Kind() != runtime.KindNative {
+		t.Fatalf("echo box kind: %v", v.Kind())
+	}
 }
