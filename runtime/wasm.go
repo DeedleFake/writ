@@ -79,11 +79,48 @@ func loadWasmBytes(data []byte) (Package, error) {
 }
 
 type wasmInst struct {
-	mu      sync.Mutex
-	ctx     context.Context
-	r       wazero.Runtime
-	mod     api.Module
-	handles *HandleTable
+	mu           sync.Mutex
+	ctx          context.Context
+	r            wazero.Runtime
+	mod          api.Module
+	handles      *HandleTable
+	guestProxies map[uint64]Value
+}
+
+// guestRef is a host-side proxy for a Native that lives in a WASM guest.
+type guestRef struct {
+	w  *wasmInst
+	id uint64
+}
+
+func (w *wasmInst) foreignGuestHandle(id uint64) Value {
+	if !isGuestHandleID(id) {
+		return Value{}
+	}
+	if w.guestProxies == nil {
+		w.guestProxies = map[uint64]Value{}
+	}
+	if v, ok := w.guestProxies[id]; ok {
+		return v
+	}
+	v := Native(&guestRef{w: w, id: id})
+	w.guestProxies[id] = v
+	return v
+}
+
+// HandleID implements HandlePeer for encoding args into this module.
+func (w *wasmInst) HandleID(v Value) (uint64, bool) {
+	if v.k != KindNative {
+		return 0, false
+	}
+	gr, ok := v.p.(*guestRef)
+	if !ok || gr == nil {
+		return 0, false
+	}
+	if gr.w == w {
+		return gr.id, true
+	}
+	return w.handles.Put(v), true
 }
 
 func (w *wasmInst) checkABI() error {
@@ -135,7 +172,7 @@ func (w *wasmInst) readPackage() (Package, error) {
 		}
 		return Package{}, errMsg(msg)
 	}
-	pkg, err := DecodePackageTable(r, w.handles)
+	pkg, err := DecodePackageTableForeign(r, w.handles, w.foreignGuestHandle)
 	if err != nil {
 		return Package{}, err
 	}
@@ -166,7 +203,7 @@ func (w *wasmInst) readPackage() (Package, error) {
 func (w *wasmInst) call(kind int32, name string, args []Value) (Value, error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	blob, err := Encode(CallList(args...), w.handles)
+	blob, err := EncodePeer(CallList(args...), w.handles, w)
 	if err != nil {
 		return Value{}, err
 	}
@@ -286,7 +323,7 @@ func (w *wasmInst) decodeResult(ptr int32) (Value, error) {
 		}
 		return Value{}, errMsg(msg)
 	}
-	return DecodeReader(r, w.handles)
+	return DecodeReaderForeign(r, w.handles, w.foreignGuestHandle)
 }
 
 func (w *wasmInst) memReader(ptr int32) io.Reader {
@@ -312,7 +349,7 @@ func (w *wasmInst) hostApply(ctx context.Context, mod api.Module, handle int64, 
 	if err != nil {
 		return write(EncodeABIError(err.Error()))
 	}
-	argsVal, err := Decode(raw, w.handles)
+	argsVal, err := DecodeForeign(raw, w.handles, w.foreignGuestHandle)
 	if err != nil {
 		return write(EncodeABIError(err.Error()))
 	}
@@ -323,7 +360,7 @@ func (w *wasmInst) hostApply(ctx context.Context, mod api.Module, handle int64, 
 	if err != nil {
 		return write(EncodeABIError(err.Error()))
 	}
-	blob, err := Encode(result, w.handles)
+	blob, err := EncodePeer(result, w.handles, w)
 	if err != nil {
 		return write(EncodeABIError(err.Error()))
 	}

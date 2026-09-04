@@ -224,7 +224,11 @@ func CallList(xs ...Value) Value {
 }
 
 // Native boxes a host object. Native values are opaque to Writ.
+// v must not be an untyped nil; use a typed nil pointer if needed.
 func Native(v any) Value {
+	if v == nil {
+		panic("runtime: Native(nil)")
+	}
 	return Value{k: KindNative, p: v}
 }
 
@@ -478,34 +482,13 @@ func (v Value) Form() (syntax.Form, bool) {
 	return f, true
 }
 
-// As type-asserts a native value into dst, which must be a non-nil *T.
-func (v Value) As(dst any) bool {
-	if v.k != KindNative || dst == nil {
-		return false
+// As type-asserts a KindNative value to T.
+func (v Value) As[T any]() (val T, ok bool) {
+	if v.k != KindNative {
+		return val, false
 	}
-	dp := reflect.ValueOf(dst)
-	if dp.Kind() != reflect.Pointer || dp.IsNil() {
-		return false
-	}
-	elem := dp.Elem()
-	if !elem.CanSet() {
-		return false
-	}
-	if v.p == nil {
-		switch elem.Kind() {
-		case reflect.Interface, reflect.Pointer, reflect.Slice, reflect.Map, reflect.Func, reflect.Chan, reflect.UnsafePointer:
-			elem.Set(reflect.Zero(elem.Type()))
-			return true
-		default:
-			return false
-		}
-	}
-	sv := reflect.ValueOf(v.p)
-	if !sv.IsValid() || !sv.Type().AssignableTo(elem.Type()) {
-		return false
-	}
-	elem.Set(sv)
-	return true
+	val, ok = v.p.(T)
+	return val, ok
 }
 
 func (v Value) isKeySym() bool {
@@ -599,6 +582,15 @@ func formatInt(v Value) string {
 func printNative(p any) string {
 	if p == nil {
 		return "#<native nil>"
+	}
+	if wh, ok := p.(*wireHandle); ok {
+		if isGuestHandleID(wh.id) {
+			return "#<handle guest>"
+		}
+		return "#<handle host>"
+	}
+	if reflect.TypeOf(p).String() == "*runtime.guestRef" {
+		return "#<handle guest>"
 	}
 	return "#<native " + reflect.TypeOf(p).String() + ">"
 }

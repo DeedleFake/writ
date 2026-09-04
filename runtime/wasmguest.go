@@ -9,14 +9,22 @@ import (
 )
 
 var (
-	guestPkg    Package
-	guestAllocs [][]byte
-	guestRet    []byte
+	guestPkg     Package
+	guestAllocs  [][]byte
+	guestRet     []byte
+	guestHandles = NewGuestHandleTable()
 )
 
 // ExportGuestPackage sets the package a WASI reactor exposes through the writ ABI.
 func ExportGuestPackage(p Package) {
 	guestPkg = p
+}
+
+func guestForeignHandle(id uint64) Value {
+	if isGuestHandleID(id) {
+		return Value{}
+	}
+	return newWireHandle(id)
 }
 
 func dispatchGuestFunc(name string, args []Value) (Value, error) {
@@ -53,7 +61,7 @@ func guestWritAlloc(n int32) int32 {
 
 //go:wasmexport writ_package
 func guestWritPackage() int32 {
-	blob, err := EncodePackageTable(guestPkg, nil)
+	blob, err := EncodePackageTable(guestPkg, guestHandles)
 	if err != nil {
 		return retainGuest(EncodeABIError(err.Error()))
 	}
@@ -83,7 +91,7 @@ func guestWritCall(kind, namePtr, nameLen, argsPtr, argsLen int32) int32 {
 		}
 		return retainGuest(blob)
 	}
-	argsVal, err := Decode(argsBlob, nil)
+	argsVal, err := DecodeForeign(argsBlob, guestHandles, guestForeignHandle)
 	if err != nil {
 		return retainGuest(EncodeABIError(err.Error()))
 	}
@@ -94,7 +102,7 @@ func guestWritCall(kind, namePtr, nameLen, argsPtr, argsLen int32) int32 {
 	if err != nil {
 		return retainGuest(EncodeABIError(err.Error()))
 	}
-	blob, err := Encode(result, nil)
+	blob, err := Encode(result, guestHandles)
 	if err != nil {
 		return retainGuest(EncodeABIError(err.Error()))
 	}

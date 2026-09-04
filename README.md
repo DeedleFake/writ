@@ -121,6 +121,8 @@ res := rt.Check(strings.NewReader(src)) // diagnostics and type hints
 
 A WASM package is a WASI reactor (`GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared`) that exports `writ_abi`, `writ_alloc`, `writ_package`, and `writ_call`. See `example/wasmhello`.
 
+Opaque `Native` values created inside a WASM package round-trip through the host as handles: the guest keeps the Go object; the host sees `KindNative` it cannot `As` into a guest type. Passing the handle into another WASM package is allowed (pass-through); only the owning package can `As` / mutate it.
+
 In-process `RegisterPackage` is the embedding path that works everywhere, including when the host itself is compiled to WASM. Binary packages for `(import)` are WASM only; Go `plugin` / `.so` packages are not supported.
 
 ## Parse, format, and tokens

@@ -16,6 +16,10 @@ func init() {
 	runtime.ExportGuestPackage(runtime.Package{
 		Funcs: map[string]runtime.Func{
 			"greet": greet,
+			"mk":    mkBox,
+			"inc":   incBox,
+			"get":   getBox,
+			"echo":  echoVal,
 		},
 		Macros: map[string]runtime.Macro{
 			"unless": unless,
@@ -24,6 +28,42 @@ func init() {
 			"version": runtime.Int64(1),
 		},
 	})
+}
+
+type box struct{ n int64 }
+
+func mkBox(args []runtime.Value) (runtime.Value, error) {
+	return runtime.Native(&box{}), nil
+}
+
+func echoVal(args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 {
+		return runtime.Nil, nil
+	}
+	return args[0], nil
+}
+
+func incBox(args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 {
+		return runtime.Nil, runtime.ErrorMsg("want box")
+	}
+	b, ok := args[0].As[*box]()
+	if !ok || b == nil {
+		return runtime.Nil, runtime.ErrorMsg("want box")
+	}
+	b.n++
+	return args[0], nil
+}
+
+func getBox(args []runtime.Value) (runtime.Value, error) {
+	if len(args) < 1 {
+		return runtime.Nil, runtime.ErrorMsg("want box")
+	}
+	b, ok := args[0].As[*box]()
+	if !ok || b == nil {
+		return runtime.Nil, runtime.ErrorMsg("want box")
+	}
+	return runtime.Int64(b.n), nil
 }
 
 func greet(args []runtime.Value) (runtime.Value, error) {

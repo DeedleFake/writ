@@ -512,8 +512,8 @@ func TestCheckNativeHostArrow(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := rt.RegisterBuiltin("use-box", func(args []runtime.Value) (runtime.Value, error) {
-		var h *nativeHandle
-		if !args[0].As(&h) || h == nil {
+		h, ok := args[0].As[*nativeHandle]()
+		if !ok || h == nil {
 			return runtime.Nil, runtime.ErrorMsg("want handle")
 		}
 		return runtime.Int64(int64(h.n)), nil
@@ -560,8 +560,8 @@ func TestCheckNativeHostArrow(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var h *nativeHandle
-	if !echoed.As(&h) || h == nil || h.n != 7 {
+	h, ok := echoed.As[*nativeHandle]()
+	if !ok || h == nil || h.n != 7 {
 		t.Fatalf("echo As: %#v", echoed)
 	}
 	raw, ok := echoed.Native()

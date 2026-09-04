@@ -311,8 +311,7 @@ func (rt *Runtime) EvalFile(path string) (runtime.Value, error) {
 }
 
 func parseErr(err error, file string) error {
-	var e *runtime.Error
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*runtime.Error](err); ok {
 		return e.WithFile(file)
 	}
 	return err
