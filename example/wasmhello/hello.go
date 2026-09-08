@@ -6,14 +6,16 @@
 package main
 
 import (
+	"deedles.dev/writ"
 	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/syntax"
+	"deedles.dev/writ/types"
 )
 
 func main() {}
 
 func init() {
-	runtime.ExportGuestPackage(runtime.Package{
+	writ.ExportGuestPackage(runtime.Package{
 		Funcs: map[string]runtime.Func{
 			"greet": greet,
 			"mk":    mkBox,
@@ -27,6 +29,17 @@ func init() {
 		Vals: map[string]runtime.Value{
 			"version": runtime.Int64(1),
 		},
+	}, map[string]types.Type{
+		"greet": types.FnType(
+			types.PosFn(types.StringType()),
+			types.PosFn(types.StringType(), types.StringType()),
+		),
+		"mk":      types.FnType(types.PosFn(types.Opaque("wasmhello", "box"))),
+		"inc":     types.FnType(types.PosFn(types.Opaque("wasmhello", "box"), types.Opaque("wasmhello", "box"))),
+		"get":     types.FnType(types.PosFn(types.IntType(), types.Opaque("wasmhello", "box"))),
+		"echo":    types.FnType(types.PosFn(types.Any(), types.Any())),
+		"unless":  types.MacroType(),
+		"version": types.IntType(),
 	})
 }
 

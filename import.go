@@ -34,9 +34,8 @@ func (rt *Runtime) loadImport(spec, fromFile string) (runtime.Value, error) {
 		if err != nil {
 			return runtime.Value{}, err
 		}
-		exp := runtime.PackageValue(pkg)
-		rt.m.RememberPackage(path, exp)
-		return exp, nil
+		rt.m.RememberPackage(path, pkg)
+		return runtime.PackageValue(pkg), nil
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -177,38 +176,25 @@ func packageType(p runtime.Package) types.Type {
 	sort.Strings(keys)
 	fields := make([]types.FnKey, 0, len(keys))
 	for _, k := range keys {
-		t := types.Any()
-		_, isFn := p.Funcs[k]
-		_, isMac := p.Macros[k]
-		if isFn || isMac {
-			t = types.FnType(types.FnClause{Result: types.Dynamic(types.Any()), Rest: true})
-		}
+		t := exportType(p, k)
 		fields = append(fields, types.FnKey{Name: k, Type: t})
 	}
 	return types.MapType(fields, nil)
 }
 
-func mapExportType(v runtime.Value) types.Type {
-	if v.Kind() != runtime.KindMap {
-		anyT := types.Any()
-		return types.Dynamic(types.MapType(nil, &anyT))
-	}
-	pairs := v.Pairs()
-	keys := make([]string, 0, len(pairs))
-	for _, p := range pairs {
-		keys = append(keys, p.Key.Name())
-	}
-	sort.Strings(keys)
-	fields := make([]types.FnKey, 0, len(keys))
-	for _, k := range keys {
-		val, _ := v.MapGet(k)
-		t := types.Any()
-		if val.Kind() == runtime.KindFn || val.Kind() == runtime.KindMacro {
-			t = types.FnType(types.FnClause{Result: types.Dynamic(types.Any()), Rest: true})
+func exportType(p runtime.Package, name string) types.Type {
+	if blob, ok := p.TypeBlobs[name]; ok && len(blob) > 0 {
+		if t, err := types.Decode(blob); err == nil {
+			return t
 		}
-		fields = append(fields, types.FnKey{Name: k, Type: t})
 	}
-	return types.MapType(fields, nil)
+	if _, ok := p.Funcs[name]; ok {
+		return types.Dynamic(types.Any())
+	}
+	if _, ok := p.Macros[name]; ok {
+		return types.MacroType()
+	}
+	return types.Any()
 }
 
 func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagnostic, error) {
@@ -231,15 +217,14 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 		}
 	}
 	if kind == "wasm" {
-		if exp, ok := rt.m.Loaded(path); ok {
-			return mapExportType(exp), nil, nil
+		if pkg, ok := rt.m.LoadedPackage(path); ok {
+			return packageType(pkg), nil, nil
 		}
 		pkg, err := runtime.LoadWasm(path)
 		if err != nil {
 			return types.Type{}, nil, err
 		}
-		exp := runtime.PackageValue(pkg)
-		rt.m.RememberPackage(path, exp)
+		rt.m.RememberPackage(path, pkg)
 		return packageType(pkg), nil, nil
 	}
 	f, err := os.Open(path)

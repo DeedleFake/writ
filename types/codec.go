@@ -6,8 +6,8 @@ import (
 	"math"
 )
 
-// Wire format for package export types (WASM package table and
-// [runtime.Package.Types]). Versioned; unknown versions fail closed.
+// Wire format for package export types (WASM package table /
+// Package.TypeBlobs). Versioned; unknown versions fail closed.
 //
 // Version 2: Writ-shaped types — no exact strings / unknown_string,
 // opaque package+name (not reflect native IDs), macro atom, no rest
@@ -49,6 +49,27 @@ func Encode(t Type) ([]byte, error) {
 		return nil, err
 	}
 	return e.buf, nil
+}
+
+// EncodePackageTypes encodes each type for Package.TypeBlobs.
+func EncodePackageTypes(m map[string]Type) (map[string][]byte, error) {
+	if len(m) == 0 {
+		return nil, nil
+	}
+	out := make(map[string][]byte, len(m))
+	for name, t := range m {
+		b, err := Encode(t)
+		if err != nil {
+			return nil, err
+		}
+		if len(b) > 0 {
+			out[name] = b
+		}
+	}
+	if len(out) == 0 {
+		return nil, nil
+	}
+	return out, nil
 }
 
 // MustEncode is Encode panicking on error.
