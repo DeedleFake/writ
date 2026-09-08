@@ -42,7 +42,7 @@ type PayloadKey struct {
 type Config struct {
 	Events  map[string][]PayloadKey
 	Aliases []Alias
-	Extra   map[string][]Arrow
+	Extra   map[string][]FnClause
 	File    string
 	Import  func(spec, fromFile string) (Type, []Diagnostic, error)
 }
@@ -219,7 +219,7 @@ func (chk *checker) infer(v syntax.Form, env typeEnv) Type {
 	case syntax.KindFloat:
 		return FloatType()
 	case syntax.KindString:
-		return ExactString(v.Text())
+		return StringType()
 	case syntax.KindQuote:
 		return chk.typeQuote(v.Inner(), env, 1)
 	case syntax.KindUnquote:
@@ -406,8 +406,8 @@ const (
 
 func isDefiniteNonMap(t Type) bool {
 	switch unwrap(t).k {
-	case tyNil, tyBool, tyInt, tyFloat, tyStr, tyUStr, tySym, tyUSym,
-		tyEmptyList, tyList, tyTuple, tyFn, tyNative:
+	case tyNil, tyBool, tyInt, tyFloat, tyStr, tySym, tyUSym,
+		tyEmptyList, tyList, tyTuple, tyFn, tyOpaque, tyMacro:
 		return true
 	default:
 		return false
@@ -514,9 +514,8 @@ func (chk *checker) typeImport(args []syntax.Form, env typeEnv, form syntax.Form
 
 func (chk *checker) typeImportPath(path syntax.Form, env typeEnv) Type {
 	t := chk.typeForm(path, env)
-	u := unwrap(t)
-	if u.k == tyStr && u.has && chk.cfg.Import != nil {
-		mt, diags, err := chk.cfg.Import(u.s, chk.cfg.File)
+	if path.Kind() == syntax.KindString && chk.cfg.Import != nil {
+		mt, diags, err := chk.cfg.Import(path.Text(), chk.cfg.File)
 		if chk.pass == 1 {
 			for _, d := range diags {
 				chk.err(path, d.Message)
@@ -838,20 +837,20 @@ func (chk *checker) typeCallParts(raw []syntax.Form, env typeEnv, form syntax.Fo
 }
 
 func (chk *checker) typeFn(args []syntax.Form, env typeEnv, form syntax.Form) Type {
-	_, clauses, err := runtime.ParseFn(args)
+	_, parsed, err := runtime.ParseFn(args)
 	if err != nil {
 		chk.err(form, err.Error())
 		return tDyn(Any())
 	}
-	arrows := make([]Arrow, len(clauses))
-	for i, c := range clauses {
+	out := make([]FnClause, len(parsed))
+	for i, c := range parsed {
 		var pf syntax.Form
 		if c.ParamsForm != nil {
 			pf = *c.ParamsForm
 		}
-		arrows[i] = chk.typeClause(c.Params, c.Body, env, pf)
+		out[i] = chk.typeClause(c.Params, c.Body, env, pf)
 	}
-	return FnType(arrows...)
+	return FnType(out...)
 }
 
 func (chk *checker) typePipe(args []syntax.Form, env typeEnv, form syntax.Form) Type {
@@ -939,7 +938,7 @@ func (chk *checker) promoteBinds(params runtime.Params, env typeEnv) {
 	}
 }
 
-func (chk *checker) typeClause(params runtime.Params, body []syntax.Form, parent typeEnv, paramsForm syntax.Form) Arrow {
+func (chk *checker) typeClause(params runtime.Params, body []syntax.Form, parent typeEnv, paramsForm syntax.Form) FnClause {
 	e := parent.clone()
 	chk.bindParams(params, e)
 	saved := chk.pass
@@ -949,7 +948,7 @@ func (chk *checker) typeClause(params runtime.Params, body []syntax.Form, parent
 	chk.promoteBinds(params, e)
 	ret := chk.forms(body, e)
 	chk.noteParams(paramsForm, e)
-	return chk.arrowFrom(params, e, ret)
+	return chk.clauseFrom(params, e, ret)
 }
 
 func (chk *checker) typeMacroClause(params runtime.Params, body []syntax.Form, parent typeEnv, paramsForm syntax.Form) {
@@ -978,7 +977,7 @@ func (chk *checker) macroForms(body []syntax.Form, env typeEnv) Type {
 	return last
 }
 
-func (chk *checker) arrowFrom(params runtime.Params, env typeEnv, ret Type) Arrow {
+func (chk *checker) clauseFrom(params runtime.Params, env typeEnv, ret Type) FnClause {
 	if !params.Key {
 		args := make([]Type, len(params.Pats))
 		for i, p := range params.Pats {
@@ -990,9 +989,9 @@ func (chk *checker) arrowFrom(params runtime.Params, env typeEnv, ret Type) Arro
 				args[i] = Any()
 			}
 		}
-		return Arrow{Args: args, Result: ret, Rest: params.Rest != ""}
+		return FnClause{Args: args, Result: ret, Rest: params.Rest != ""}
 	}
-	keys := make([]ArrowKey, len(params.Keys))
+	keys := make([]FnKey, len(params.Keys))
 	for i, kp := range params.Keys {
 		var t Type
 		if !kp.Pat.Bind {
@@ -1002,9 +1001,9 @@ func (chk *checker) arrowFrom(params runtime.Params, env typeEnv, ret Type) Arro
 		} else {
 			t = Any()
 		}
-		keys[i] = ArrowKey{Name: kp.Name, Type: t}
+		keys[i] = FnKey{Name: kp.Name, Type: t}
 	}
-	return Arrow{Key: true, Keys: keys, Result: ret}
+	return FnClause{Key: true, Keys: keys, Result: ret}
 }
 
 func (chk *checker) apply(fnT Type, raw []syntax.Form, env typeEnv, form syntax.Form) Type {
@@ -1021,12 +1020,12 @@ func (chk *checker) apply(fnT Type, raw []syntax.Form, env typeEnv, form syntax.
 		return tDyn(Any())
 	}
 	before := len(chk.diags)
-	ret := chk.applyArrows(inner.arrows, parts.pos, parts.keys, form)
+	ret := chk.applyClauses(inner.clauses, parts.pos, parts.keys, form)
 	if parts.open && len(chk.diags) > before {
 		chk.diags = chk.diags[:before]
 		return tDyn(Any())
 	}
-	chk.refineCall(inner.arrows, parts.rawPos, parts.keyRaw, env)
+	chk.refineCall(inner.clauses, parts.rawPos, parts.keyRaw, env)
 	return ret
 }
 
@@ -1042,12 +1041,12 @@ func (chk *checker) applyFnType(fnT Type, pos []Type, form syntax.Form) Type {
 		chk.err(form, "not a function: "+chk.pt(fnT))
 		return tDyn(Any())
 	}
-	return chk.applyArrows(inner.arrows, pos, map[string]Type{}, form)
+	return chk.applyClauses(inner.clauses, pos, map[string]Type{}, form)
 }
 
-func (chk *checker) applyArrows(arrows []Arrow, pos []Type, keys map[string]Type, form syntax.Form) Type {
+func (chk *checker) applyClauses(clauses []FnClause, pos []Type, keys map[string]Type, form syntax.Form) Type {
 	var rets []Type
-	for _, ar := range arrows {
+	for _, ar := range clauses {
 		if !ar.Key {
 			if len(keys) > 0 {
 				continue
@@ -1122,17 +1121,17 @@ func (chk *checker) applyArrows(arrows []Arrow, pos []Type, keys map[string]Type
 	return u
 }
 
-func (chk *checker) refineCall(arrows []Arrow, posRaw []syntax.Form, keyRaw []struct {
+func (chk *checker) refineCall(clauses []FnClause, posRaw []syntax.Form, keyRaw []struct {
 	name string
 	raw  syntax.Form
 }, env typeEnv) {
-	var posAr []Arrow
-	for _, a := range arrows {
+	var posCl []FnClause
+	for _, a := range clauses {
 		if a.Key {
 			continue
 		}
 		if len(a.Args) == len(posRaw) || (a.Rest && len(a.Args) <= len(posRaw)) {
-			posAr = append(posAr, a)
+			posCl = append(posCl, a)
 		}
 	}
 	for i, arg := range posRaw {
@@ -1140,7 +1139,7 @@ func (chk *checker) refineCall(arrows []Arrow, posRaw []syntax.Form, keyRaw []st
 			continue
 		}
 		var wants []Type
-		for _, a := range posAr {
+		for _, a := range posCl {
 			if i < len(a.Args) {
 				wants = append(wants, a.Args[i])
 			}
@@ -1163,10 +1162,10 @@ func (chk *checker) refineCall(arrows []Arrow, posRaw []syntax.Form, keyRaw []st
 	if len(posRaw) > 0 {
 		return
 	}
-	var keyAr []Arrow
-	for _, a := range arrows {
+	var keyCl []FnClause
+	for _, a := range clauses {
 		if a.Key {
-			keyAr = append(keyAr, a)
+			keyCl = append(keyCl, a)
 		}
 	}
 	for _, kr := range keyRaw {
@@ -1174,7 +1173,7 @@ func (chk *checker) refineCall(arrows []Arrow, posRaw []syntax.Form, keyRaw []st
 			continue
 		}
 		var wants []Type
-		for _, a := range keyAr {
+		for _, a := range keyCl {
 			for _, k := range a.Keys {
 				if k.Name == kr.name {
 					wants = append(wants, k.Type)
@@ -1215,7 +1214,7 @@ func (chk *checker) applyTypeToCall(name string, pos []Type, keys map[string]Typ
 		chk.err(at, "not a function: "+chk.pt(fnT))
 		return tDyn(Any())
 	}
-	return chk.applyArrows(inner.arrows, pos, keys, at)
+	return chk.applyClauses(inner.clauses, pos, keys, at)
 }
 
 func (chk *checker) callBuiltin(name string, raw []syntax.Form, env typeEnv, form syntax.Form) Type {
@@ -1236,7 +1235,7 @@ func (chk *checker) callHostTyped(name string, pos []Type, keys map[string]Type,
 	if len(b) == 0 {
 		return tDyn(Any())
 	}
-	return chk.applyArrows(b, pos, keys, form)
+	return chk.applyClauses(b, pos, keys, form)
 }
 
 func (chk *checker) expectNum(pos []Type, raw []syntax.Form, form syntax.Form, name string) {
@@ -1354,31 +1353,7 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form syntax.Form, 
 		}
 		return BoolType()
 	case "str":
-		var texts []string
-		allLit := true
-		for _, p := range pos {
-			t := unwrap(p)
-			switch {
-			case t.k == tyStr && t.has:
-				texts = append(texts, t.s)
-			case t.k == tySym && t.has:
-				texts = append(texts, t.s)
-			case t.k == tyBool && t.has:
-				if t.b {
-					texts = append(texts, "true")
-				} else {
-					texts = append(texts, "false")
-				}
-			case t.k == tyNil:
-				texts = append(texts, "nil")
-			default:
-				allLit = false
-			}
-		}
-		if allLit {
-			return ExactString(strings.Join(texts, ""))
-		}
-		return UnknownString()
+		return StringType()
 	case "len":
 		arg := NilType()
 		if len(pos) > 0 {
@@ -1511,9 +1486,7 @@ func (chk *checker) callBuiltinTyped(name string, pos []Type, form syntax.Form, 
 			return SymbolType()
 		case a.k == tyUSym:
 			return UnknownSymbol()
-		case a.k == tyStr && a.has:
-			return ExactSymbol(a.s)
-		case a.k == tyStr || a.k == tyUStr:
+		case a.k == tyStr:
 			return UnknownSymbol()
 		case a.k == tyBool && a.has && a.b:
 			return TrueType()
@@ -1708,9 +1681,9 @@ func (chk *checker) typeUpdateProp(pos []Type, form syntax.Form, raw []syntax.Fo
 	if root != "" && chk.pass == 0 {
 		inner := unwrap(fnT)
 		written := ret
-		if inner.k == tyFn && len(inner.arrows) > 0 {
+		if inner.k == tyFn && len(inner.clauses) > 0 {
 			var rs []Type
-			for _, a := range inner.arrows {
+			for _, a := range inner.clauses {
 				rs = append(rs, a.Result)
 			}
 			written = tOr(rs)
@@ -1824,22 +1797,22 @@ func Check(forms []syntax.Form, prog runtime.Program, cfg Config) CheckResult {
 		byName[f.name] = append(byName[f.name], f)
 	}
 	for name, list := range byName {
-		arrows := make([]Arrow, len(list))
+		clauses := make([]FnClause, len(list))
 		for i, f := range list {
 			e := env.clone()
 			chk.bindParams(f.params, e)
-			arrows[i] = chk.arrowFrom(f.params, e, tDyn(Any()))
+			clauses[i] = chk.clauseFrom(f.params, e, tDyn(Any()))
 		}
-		chk.fns[name] = FnType(arrows...)
+		chk.fns[name] = FnType(clauses...)
 	}
 
 	typeFnBodies := func() {
 		for name, list := range byName {
-			arrows := make([]Arrow, len(list))
+			clauses := make([]FnClause, len(list))
 			for i, f := range list {
-				arrows[i] = chk.typeClause(f.params, f.body, env, f.paramsForm)
+				clauses[i] = chk.typeClause(f.params, f.body, env, f.paramsForm)
 			}
-			chk.fns[name] = FnType(arrows...)
+			chk.fns[name] = FnType(clauses...)
 		}
 	}
 

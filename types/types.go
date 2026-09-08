@@ -1,7 +1,6 @@
 package types
 
 import (
-	"encoding/json"
 	"reflect"
 	"slices"
 	"strings"
@@ -21,7 +20,6 @@ const (
 	tyInt
 	tyFloat
 	tyStr
-	tyUStr
 	tySym
 	tyUSym
 	tyEmptyList
@@ -32,21 +30,23 @@ const (
 	tyFn
 	tyOr
 	tyDyn
-	tyNative
+	tyOpaque
+	tyMacro
 )
 
 // Type is a static type. Use the constructors such as [IntType] and [Union].
 type Type struct {
-	k      typeKind
-	has    bool
-	b      bool
-	s      string
-	inner  *Type
-	items  []Type
-	fields []mapField
-	rest   *Type
-	arrows []Arrow
-	rt     reflect.Type
+	k       typeKind
+	has     bool
+	b       bool
+	s       string
+	inner   *Type
+	items   []Type
+	fields  []mapField
+	rest    *Type
+	clauses []FnClause
+	pkg     string // opaque package id
+	name    string // opaque type name (optional)
 }
 
 type mapField struct {
@@ -54,34 +54,31 @@ type mapField struct {
 	t    Type
 }
 
-// Arrow is one function clause type.
-type Arrow struct {
+// FnClause is one function clause: (fn (Args) Return) or keyed args.
+// Rest is host/checker-only (runtime rest params / print builtin); it is
+// not part of the Writ type language, PrintType, or Encode.
+type FnClause struct {
 	Key    bool
 	Args   []Type
-	Keys   []ArrowKey
+	Keys   []FnKey
 	Rest   bool
 	Result Type
 }
 
-// ArrowKey is a keyword argument type.
-type ArrowKey struct {
+// FnKey is a keyword argument or map field type.
+type FnKey struct {
 	Name string
 	Type Type
 }
 
-// PosArrow builds a positional arrow.
-func PosArrow(ret Type, args ...Type) Arrow {
-	return Arrow{Args: args, Result: ret}
+// PosFn builds a positional clause (fn (args...) ret).
+func PosFn(ret Type, args ...Type) FnClause {
+	return FnClause{Args: args, Result: ret}
 }
 
-// PosRestArrow is a positional arrow that accepts extra arguments.
-func PosRestArrow(ret Type, args ...Type) Arrow {
-	return Arrow{Args: args, Rest: true, Result: ret}
-}
-
-// KeyArrow builds a keyword arrow.
-func KeyArrow(ret Type, keys ...ArrowKey) Arrow {
-	return Arrow{Key: true, Keys: keys, Result: ret}
+// KeyFn builds a keyed clause (fn (name: T ...) ret).
+func KeyFn(ret Type, keys ...FnKey) FnClause {
+	return FnClause{Key: true, Keys: keys, Result: ret}
 }
 
 func None() Type          { return Type{k: tyNone} }
@@ -93,13 +90,11 @@ func FalseType() Type     { return Type{k: tyBool, has: true, b: false} }
 func IntType() Type       { return Type{k: tyInt} }
 func FloatType() Type     { return Type{k: tyFloat} }
 func StringType() Type    { return Type{k: tyStr} }
-func UnknownString() Type { return Type{k: tyUStr} }
 func SymbolType() Type    { return Type{k: tySym} }
 func UnknownSymbol() Type { return Type{k: tyUSym} }
 func EmptyList() Type     { return Type{k: tyEmptyList} }
 func EmptyMapType() Type  { return Type{k: tyEmptyMap} }
-
-func ExactString(s string) Type { return Type{k: tyStr, has: true, s: s} }
+func MacroType() Type     { return Type{k: tyMacro} }
 
 func ExactSymbol(s string) Type {
 	switch s {
@@ -125,7 +120,7 @@ func Tuple(items ...Type) Type {
 	return Type{k: tyTuple, items: items}
 }
 
-func MapType(keys []ArrowKey, rest *Type) Type {
+func MapType(keys []FnKey, rest *Type) Type {
 	if len(keys) == 0 && rest == nil {
 		return EmptyMapType()
 	}
@@ -136,26 +131,40 @@ func MapType(keys []ArrowKey, rest *Type) Type {
 	return Type{k: tyMap, fields: fields, rest: rest}
 }
 
-func FnType(arrows ...Arrow) Type {
-	return Type{k: tyFn, arrows: arrows}
+func FnType(clauses ...FnClause) Type {
+	return Type{k: tyFn, clauses: clauses}
+}
+
+// OpaqueType is the universe of host/guest opaques.
+func OpaqueType() Type { return Type{k: tyOpaque} }
+
+// Opaque is a nominal opaque. With only pkg: (opaque from P).
+// With pkg and name: (opaque from P named T). Empty pkg and name is [OpaqueType].
+func Opaque(pkg string, name ...string) Type {
+	t := Type{k: tyOpaque, pkg: pkg}
+	if len(name) > 0 {
+		t.name = name[0]
+	}
+	return t
 }
 
 var nativeIntern sync.Map // reflect.Type -> Type
 
 func nativeOf(rt reflect.Type) Type {
 	if rt == nil {
-		return Type{k: tyNative}
+		return OpaqueType()
 	}
 	if v, ok := nativeIntern.Load(rt); ok {
 		return v.(Type)
 	}
-	t := Type{k: tyNative, rt: rt}
+	// Host opaques: package "host", name = reflect identity (not printed as reflect).
+	t := Opaque("host", rt.String())
 	actual, _ := nativeIntern.LoadOrStore(rt, t)
 	return actual.(Type)
 }
 
-// Native is a nominal host type, interned by [reflect.Type]. Different
-// type parameters do not unify.
+// Native maps a Go host type to (opaque from host named …) for in-process
+// RegisterBuiltin / RegisterPackage. Encode uses package/name, not reflect IDs.
 func Native[T any]() Type {
 	return nativeOf(reflect.TypeFor[T]())
 }
@@ -243,11 +252,11 @@ func sameType(a, b Type) bool {
 		return false
 	}
 	switch a.k {
-	case tyNone, tyAny, tyNil, tyInt, tyFloat, tyUStr, tyUSym, tyEmptyList, tyEmptyMap:
+	case tyNone, tyAny, tyNil, tyInt, tyFloat, tyStr, tyUSym, tyEmptyList, tyEmptyMap, tyMacro:
 		return true
 	case tyBool:
 		return a.has == b.has && a.b == b.b
-	case tyStr, tySym:
+	case tySym:
 		return a.has == b.has && a.s == b.s
 	case tyList:
 		return sameType(*a.inner, *b.inner)
@@ -300,25 +309,25 @@ func sameType(a, b Type) bool {
 		}
 		return true
 	case tyFn:
-		if len(a.arrows) != len(b.arrows) {
+		if len(a.clauses) != len(b.clauses) {
 			return false
 		}
-		for i := range a.arrows {
-			if !sameArrow(a.arrows[i], b.arrows[i]) {
+		for i := range a.clauses {
+			if !sameClause(a.clauses[i], b.clauses[i]) {
 				return false
 			}
 		}
 		return true
 	case tyDyn:
 		return sameType(*a.inner, *b.inner)
-	case tyNative:
-		return a.rt == b.rt
+	case tyOpaque:
+		return a.pkg == b.pkg && a.name == b.name
 	default:
 		return false
 	}
 }
 
-func sameArrow(a, b Arrow) bool {
+func sameClause(a, b FnClause) bool {
 	if a.Key != b.Key || a.Rest != b.Rest || !sameType(a.Result, b.Result) {
 		return false
 	}
@@ -366,44 +375,38 @@ func PrintType(t Type) string { return printType(t, nil) }
 func printType(t Type, aliases []Alias) string {
 	switch t.k {
 	case tyNone:
-		return "none()"
+		return "none"
 	case tyAny:
-		return "any()"
+		return "any"
 	case tyNil:
 		return "nil"
 	case tyBool:
 		if !t.has {
-			return "bool()"
+			return "bool"
 		}
 		if t.b {
 			return "true"
 		}
 		return "false"
 	case tyInt:
-		return "int()"
+		return "int"
 	case tyFloat:
-		return "float()"
+		return "float"
 	case tyStr:
-		if !t.has {
-			return "string()"
-		}
-		b, _ := json.Marshal(t.s)
-		return string(b)
-	case tyUStr:
-		return "unknown_string()"
+		return "string"
 	case tySym:
 		if !t.has {
-			return "symbol()"
+			return "symbol"
 		}
 		return "'" + runtime.FormatSymbol(t.s)
 	case tyUSym:
-		return "unknown_symbol()"
+		return "unknown_symbol"
 	case tyEmptyList:
-		return "empty_list()"
+		return "[]"
 	case tyEmptyMap:
-		return "empty_map()"
+		return "[:]"
 	case tyList:
-		return "list(" + printType(*t.inner, aliases) + ")"
+		return "(list " + printType(*t.inner, aliases) + ")"
 	case tyTuple:
 		parts := make([]string, len(t.items))
 		for i, x := range t.items {
@@ -413,24 +416,23 @@ func printType(t Type, aliases []Alias) string {
 	case tyMap:
 		var parts []string
 		for _, f := range t.fields {
-			parts = append(parts, f.name+": "+printType(f.t, aliases))
+			parts = append(parts, "'"+runtime.FormatSymbol(f.name)+": "+printType(f.t, aliases))
 		}
 		if t.rest != nil {
-			parts = append(parts, "*: "+printType(*t.rest, aliases))
+			parts = append(parts, "symbol: "+printType(*t.rest, aliases))
 		}
 		if len(parts) == 0 {
-			return "empty_map()"
+			return "[:]"
 		}
 		return "[" + strings.Join(parts, " ") + "]"
 	case tyFn:
-		if len(t.arrows) == 0 {
-			return "fn"
+		if len(t.clauses) == 0 {
+			return "(fn () any)"
 		}
 		var parts []string
-		for _, ar := range t.arrows {
-			p := printArrow(ar, aliases)
-			dup := slices.Contains(parts, p)
-			if !dup {
+		for _, cl := range t.clauses {
+			p := printClause(cl, aliases)
+			if !slices.Contains(parts, p) {
 				parts = append(parts, p)
 			}
 		}
@@ -439,56 +441,41 @@ func printType(t Type, aliases []Alias) string {
 		if name := closedLitName(t, aliases); name != "" {
 			return name
 		}
-		var lits []string
-		var rest []Type
-		for _, x := range t.items {
-			if x.k == tyStr && x.has {
-				lits = append(lits, x.s)
-			} else {
-				rest = append(rest, x)
-			}
-		}
-		var parts []string
-		if len(lits) > 0 {
-			quoted := make([]string, len(lits))
-			for i, v := range lits {
-				b, _ := json.Marshal(v)
-				quoted[i] = string(b)
-			}
-			parts = append(parts, strings.Join(quoted, " or "))
-		}
-		for _, x := range rest {
-			parts = append(parts, printType(x, aliases))
+		parts := make([]string, len(t.items))
+		for i, x := range t.items {
+			parts[i] = printType(x, aliases)
 		}
 		return strings.Join(parts, " or ")
 	case tyDyn:
-		return "dynamic(" + printType(*t.inner, aliases) + ")"
-	case tyNative:
-		if t.rt == nil {
-			return "native()"
+		return "(dynamic " + printType(*t.inner, aliases) + ")"
+	case tyOpaque:
+		if t.pkg == "" && t.name == "" {
+			return "opaque"
 		}
-		return "native(" + t.rt.String() + ")"
+		if t.name == "" {
+			return "(opaque from " + t.pkg + ")"
+		}
+		return "(opaque from " + t.pkg + " named " + t.name + ")"
+	case tyMacro:
+		return "macro"
 	default:
-		return "any()"
+		return "any"
 	}
 }
 
-func printArrow(ar Arrow, aliases []Alias) string {
-	if !ar.Key {
-		args := make([]string, len(ar.Args))
-		for i, t := range ar.Args {
+func printClause(cl FnClause, aliases []Alias) string {
+	if !cl.Key {
+		args := make([]string, len(cl.Args))
+		for i, t := range cl.Args {
 			args[i] = printType(t, aliases)
 		}
-		if ar.Rest {
-			args = append(args, "...")
-		}
-		return "(" + strings.Join(args, " ") + ") -> " + printType(ar.Result, aliases)
+		return "(fn (" + strings.Join(args, " ") + ") " + printType(cl.Result, aliases) + ")"
 	}
-	keys := make([]string, len(ar.Keys))
-	for i, k := range ar.Keys {
+	keys := make([]string, len(cl.Keys))
+	for i, k := range cl.Keys {
 		keys[i] = k.Name + ": " + printType(k.Type, aliases)
 	}
-	return "(" + strings.Join(keys, " ") + ") -> " + printType(ar.Result, aliases)
+	return "(fn (" + strings.Join(keys, " ") + ") " + printType(cl.Result, aliases) + ")"
 }
 
 func closedLitName(t Type, aliases []Alias) string {
@@ -497,14 +484,14 @@ func closedLitName(t Type, aliases []Alias) string {
 	}
 	var lits []string
 	for _, x := range t.items {
-		if x.k != tyStr || !x.has {
+		if x.k != tySym || !x.has {
 			return ""
 		}
 		lits = append(lits, x.s)
 	}
 	for _, a := range aliases {
 		if sameStringSet(lits, a.Members) {
-			return a.Name + "()"
+			return a.Name
 		}
 	}
 	return ""
@@ -610,26 +597,8 @@ func intersect(a, b Type) Type {
 	if b.k == tyBool && !b.has && a.k == tySym && !a.has {
 		return BoolType()
 	}
-	if a.k == tyUStr && b.k == tyUStr {
-		return UnknownString()
-	}
 	if a.k == tyStr && b.k == tyStr {
-		if !a.has {
-			return b
-		}
-		if !b.has {
-			return a
-		}
-		if a.s == b.s {
-			return a
-		}
-		return None()
-	}
-	if a.k == tyUStr && b.k == tyStr && !b.has {
-		return UnknownString()
-	}
-	if b.k == tyUStr && a.k == tyStr && !a.has {
-		return UnknownString()
+		return StringType()
 	}
 	if a.k == tyUSym && b.k == tyUSym {
 		return UnknownSymbol()
@@ -754,10 +723,36 @@ func intersect(a, b Type) Type {
 		return tMap(keys, rest)
 	}
 	if a.k == tyFn && b.k == tyFn {
-		arrows := append(append([]Arrow{}, a.arrows...), b.arrows...)
-		return Type{k: tyFn, arrows: arrows}
+		clauses := append(append([]FnClause{}, a.clauses...), b.clauses...)
+		return Type{k: tyFn, clauses: clauses}
 	}
-	if a.k == tyNative && b.k == tyNative && a.rt == b.rt {
+	if a.k == tyMacro && b.k == tyMacro {
+		return MacroType()
+	}
+	if a.k == tyOpaque && b.k == tyOpaque {
+		return intersectOpaque(a, b)
+	}
+	return None()
+}
+
+func intersectOpaque(a, b Type) Type {
+	// opaque universe absorbs the other opaque.
+	if a.pkg == "" && a.name == "" {
+		return b
+	}
+	if b.pkg == "" && b.name == "" {
+		return a
+	}
+	if a.pkg != b.pkg {
+		return None()
+	}
+	if a.name == "" {
+		return b
+	}
+	if b.name == "" {
+		return a
+	}
+	if a.name == b.name {
 		return a
 	}
 	return None()
@@ -815,7 +810,7 @@ func argFits(got, domain Type) bool {
 
 func numType() Type { return tOr([]Type{IntType(), FloatType()}) }
 
-func stringyType() Type { return tOr([]Type{StringType(), UnknownString()}) }
+func stringyType() Type { return StringType() }
 
 func nameyType() Type {
 	return tOr([]Type{SymbolType(), UnknownSymbol(), TrueType(), FalseType(), NilType()})
@@ -1038,7 +1033,7 @@ func kindOf(v runtime.Value) Type {
 	case runtime.KindFloat:
 		return FloatType()
 	case runtime.KindString:
-		return ExactString(v.Text())
+		return StringType()
 	case runtime.KindSymbol:
 		return ExactSymbol(v.Name())
 	case runtime.KindList:
@@ -1065,14 +1060,14 @@ func kindOf(v runtime.Value) Type {
 	case runtime.KindFn:
 		return FnType()
 	case runtime.KindMacro:
-		return tDyn(Any())
+		return MacroType()
 	case runtime.KindNative:
 		nv, ok := v.Native()
 		if !ok {
 			return Any()
 		}
 		if nv == nil {
-			return nativeOf(nil)
+			return OpaqueType()
 		}
 		return nativeOf(reflect.TypeOf(nv))
 	case runtime.KindSyntax:
@@ -1109,7 +1104,7 @@ func kindOfForm(v syntax.Form) Type {
 	case syntax.KindFloat:
 		return FloatType()
 	case syntax.KindString:
-		return ExactString(v.Text())
+		return StringType()
 	case syntax.KindSymbol:
 		return ExactSymbol(v.Name())
 	case syntax.KindList:

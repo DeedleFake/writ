@@ -51,7 +51,7 @@ func TestCheckDynamicVsStatic(t *testing.T) {
 	}
 }
 
-func TestCheckClauseArrows(t *testing.T) {
+func TestCheckClauseFns(t *testing.T) {
 	src := `
 (def (f 0) 1)
 (def (f n) (+ n 1))
@@ -170,14 +170,14 @@ func TestCheckHostAlias(t *testing.T) {
 	}
 	if err := rt.RegisterBuiltin("paint", func(args []runtime.Value) (runtime.Value, error) {
 		return runtime.Nil, nil
-	}, types.PosArrow(types.NilType(), ct)); err != nil {
+	}, types.PosFn(types.NilType(), ct)); err != nil {
 		t.Fatal(err)
 	}
-	res := rt.Check(rd(`(paint "red")`))
+	res := rt.Check(rd(`(paint 'red)`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("paint red: %v", res.Diagnostics)
 	}
-	res = rt.Check(rd(`(paint "green")`))
+	res = rt.Check(rd(`(paint 'green)`))
 	if len(res.Diagnostics) == 0 {
 		t.Fatal("expected color error")
 	}
@@ -243,7 +243,7 @@ func TestCheckKeywordParamName(t *testing.T) {
 	}
 }
 
-func TestCheckImportedArrows(t *testing.T) {
+func TestCheckImportedFns(t *testing.T) {
 	res := New().CheckFile(filepath.Join("testdata", "use.writ"))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("%v", res.Diagnostics)
@@ -504,11 +504,11 @@ type nativeHandle struct{ n int }
 
 type nativeOther struct{ n int }
 
-func TestCheckNativeHostArrow(t *testing.T) {
+func TestCheckNativeHostOpaque(t *testing.T) {
 	rt := New()
 	if err := rt.RegisterBuiltin("mk-box", func(args []runtime.Value) (runtime.Value, error) {
 		return runtime.Native(&nativeHandle{n: 7}), nil
-	}, types.PosArrow(types.Native[*nativeHandle]())); err != nil {
+	}, types.PosFn(types.Native[*nativeHandle]())); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.RegisterBuiltin("use-box", func(args []runtime.Value) (runtime.Value, error) {
@@ -517,17 +517,17 @@ func TestCheckNativeHostArrow(t *testing.T) {
 			return runtime.Nil, runtime.ErrorMsg("want handle")
 		}
 		return runtime.Int64(int64(h.n)), nil
-	}, types.PosArrow(types.IntType(), types.Native[*nativeHandle]())); err != nil {
+	}, types.PosFn(types.IntType(), types.Native[*nativeHandle]())); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.RegisterBuiltin("echo-box", func(args []runtime.Value) (runtime.Value, error) {
 		return args[0], nil
-	}, types.PosArrow(types.Native[*nativeHandle](), types.Native[*nativeHandle]())); err != nil {
+	}, types.PosFn(types.Native[*nativeHandle](), types.Native[*nativeHandle]())); err != nil {
 		t.Fatal(err)
 	}
 	if err := rt.RegisterBuiltin("mk-other", func(args []runtime.Value) (runtime.Value, error) {
 		return runtime.Native(&nativeOther{n: 1}), nil
-	}, types.PosArrow(types.Native[*nativeOther]())); err != nil {
+	}, types.PosFn(types.Native[*nativeOther]())); err != nil {
 		t.Fatal(err)
 	}
 
@@ -541,7 +541,7 @@ func TestCheckNativeHostArrow(t *testing.T) {
 	}
 	res = rt.Check(rd("(use-box (mk-other))"))
 	if len(res.Diagnostics) == 0 {
-		t.Fatal("expected Native[A] vs Native[B] error")
+		t.Fatal("expected opaque A vs B error")
 	}
 	res = rt.Check(rd(`(let [x: (mk-box)] (use-box x))`))
 	if len(res.Diagnostics) != 0 {

@@ -23,10 +23,10 @@ type Runtime struct {
 	stdout        io.Writer
 	allowAbsolute bool
 
-	pkgs        map[string]runtime.Package
-	extraArrows map[string][]types.Arrow
-	events      map[string][]types.PayloadKey
-	aliases     []types.Alias
+	pkgs         map[string]runtime.Package
+	extraClauses map[string][]types.FnClause
+	events       map[string][]types.PayloadKey
+	aliases      []types.Alias
 
 	exportCache  map[string]cachedExport
 	checkLoading []string
@@ -76,12 +76,12 @@ func WithAllowAbsoluteImports() Option {
 // New constructs a runtime.
 func New(opts ...Option) *Runtime {
 	rt := &Runtime{
-		m:           runtime.New(),
-		stdout:      io.Discard,
-		pkgs:        map[string]runtime.Package{},
-		extraArrows: map[string][]types.Arrow{},
-		events:      map[string][]types.PayloadKey{},
-		exportCache: map[string]cachedExport{},
+		m:            runtime.New(),
+		stdout:       io.Discard,
+		pkgs:         map[string]runtime.Package{},
+		extraClauses: map[string][]types.FnClause{},
+		events:       map[string][]types.PayloadKey{},
+		exportCache:  map[string]cachedExport{},
 	}
 	rt.m.Import = rt.loadImport
 	for _, o := range opts {
@@ -102,13 +102,13 @@ func (rt *Runtime) RegisterPackage(name string, pkg runtime.Package) {
 }
 
 // RegisterBuiltin adds a host function visible as a call head.
-func (rt *Runtime) RegisterBuiltin(name string, call runtime.Func, arrows ...types.Arrow) error {
+func (rt *Runtime) RegisterBuiltin(name string, call runtime.Func, clauses ...types.FnClause) error {
 	rt.m.Lock()
 	defer rt.m.Unlock()
-	return rt.registerBuiltin(name, call, arrows...)
+	return rt.registerBuiltin(name, call, clauses...)
 }
 
-func (rt *Runtime) registerBuiltin(name string, call runtime.Func, arrows ...types.Arrow) error {
+func (rt *Runtime) registerBuiltin(name string, call runtime.Func, clauses ...types.FnClause) error {
 	if scanner.IsKeyword(name) {
 		return runtime.Errorf("cannot redefine %s", name)
 	}
@@ -116,10 +116,10 @@ func (rt *Runtime) registerBuiltin(name string, call runtime.Func, arrows ...typ
 		return runtime.Errorf("cannot redefine %s", name)
 	}
 	rt.m.RegisterExtra(name, call)
-	if rt.extraArrows == nil {
-		rt.extraArrows = map[string][]types.Arrow{}
+	if rt.extraClauses == nil {
+		rt.extraClauses = map[string][]types.FnClause{}
 	}
-	rt.extraArrows[name] = arrows
+	rt.extraClauses[name] = clauses
 	return nil
 }
 
@@ -138,7 +138,7 @@ func (rt *Runtime) RegisterPrint() {
 		}
 		_, _ = io.WriteString(w, "\n")
 		return runtime.Nil, nil
-	}, types.PosRestArrow(types.NilType()))
+	}, types.FnClause{Result: types.NilType(), Rest: true})
 }
 
 // RegisterEvent declares an event for (on ...) and [Runtime.Fire].
@@ -157,7 +157,7 @@ func (rt *Runtime) RegisterEvent(name string, keys ...types.PayloadKey) {
 	rt.m.SetEventKeys(name, names)
 }
 
-// RegisterAlias names a closed union of exact strings for type display
+// RegisterAlias names a closed union of exact symbols for type display
 // and host domain types.
 func (rt *Runtime) RegisterAlias(name string, members ...string) {
 	rt.m.Lock()
@@ -168,7 +168,7 @@ func (rt *Runtime) RegisterAlias(name string, members ...string) {
 func (rt *Runtime) registerAlias(name string, members ...string) {
 	ts := make([]types.Type, len(members))
 	for i, m := range members {
-		ts[i] = types.ExactString(m)
+		ts[i] = types.ExactSymbol(m)
 	}
 	rt.aliases = append(rt.aliases, types.Alias{Name: name, Type: types.Union(ts...), Members: append([]string{}, members...)})
 }
@@ -337,7 +337,7 @@ func (rt *Runtime) typeConfig(file string) types.Config {
 	return types.Config{
 		Events:  rt.events,
 		Aliases: rt.aliases,
-		Extra:   rt.extraArrows,
+		Extra:   rt.extraClauses,
 		File:    file,
 		Import:  rt.importType,
 	}
