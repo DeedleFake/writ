@@ -122,7 +122,7 @@ func TestHostBuiltinAndEvent(t *testing.T) {
 			seen = append(seen, runtime.Print(args[0]))
 		}
 		return runtime.Nil, nil
-	}, types.PosRestArrow(types.NilType())); err != nil {
+	}, types.FnClause{Result: types.NilType(), Rest: true}); err != nil {
 		t.Fatal(err)
 	}
 	rt.RegisterEvent("ping", types.PayloadKey{Name: "who", Type: types.StringType()})
@@ -420,7 +420,7 @@ func TestHostBuiltinCanGetProp(t *testing.T) {
 	rt := New()
 	if err := rt.RegisterBuiltin("gp", func(args []runtime.Value) (runtime.Value, error) {
 		return rt.GetProp("x"), nil
-	}, types.PosRestArrow(types.Any())); err != nil {
+	}, types.FnClause{Result: types.Any(), Rest: true}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := rt.Eval(rd(`(prop-set 'x 3)`)); err != nil {

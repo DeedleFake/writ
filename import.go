@@ -175,15 +175,15 @@ func packageType(p runtime.Package) types.Type {
 		}
 	}
 	sort.Strings(keys)
-	fields := make([]types.ArrowKey, 0, len(keys))
+	fields := make([]types.FnKey, 0, len(keys))
 	for _, k := range keys {
 		t := types.Any()
 		_, isFn := p.Funcs[k]
 		_, isMac := p.Macros[k]
 		if isFn || isMac {
-			t = types.FnType(types.PosRestArrow(types.Dynamic(types.Any())))
+			t = types.FnType(types.FnClause{Result: types.Dynamic(types.Any()), Rest: true})
 		}
-		fields = append(fields, types.ArrowKey{Name: k, Type: t})
+		fields = append(fields, types.FnKey{Name: k, Type: t})
 	}
 	return types.MapType(fields, nil)
 }
@@ -199,14 +199,14 @@ func mapExportType(v runtime.Value) types.Type {
 		keys = append(keys, p.Key.Name())
 	}
 	sort.Strings(keys)
-	fields := make([]types.ArrowKey, 0, len(keys))
+	fields := make([]types.FnKey, 0, len(keys))
 	for _, k := range keys {
 		val, _ := v.MapGet(k)
 		t := types.Any()
 		if val.Kind() == runtime.KindFn || val.Kind() == runtime.KindMacro {
-			t = types.FnType(types.PosRestArrow(types.Dynamic(types.Any())))
+			t = types.FnType(types.FnClause{Result: types.Dynamic(types.Any()), Rest: true})
 		}
-		fields = append(fields, types.ArrowKey{Name: k, Type: t})
+		fields = append(fields, types.FnKey{Name: k, Type: t})
 	}
 	return types.MapType(fields, nil)
 }
