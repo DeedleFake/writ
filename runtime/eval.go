@@ -3,13 +3,14 @@ package runtime
 import (
 	"time"
 
+	"deedles.dev/writ/ir"
 	"deedles.dev/writ/scanner"
 	"deedles.dev/writ/syntax"
 )
 
 type ctx struct {
 	rt       *Machine
-	macros   map[string][]Clause
+	macros   map[string][]ir.Clause
 	macroEnv *env
 	file     string
 	depth    int
@@ -17,13 +18,13 @@ type ctx struct {
 
 const maxEvalDepth = 8000
 
-func newCtx(rt *Machine, env *env, macros map[string][]Clause) *ctx {
+func newCtx(rt *Machine, env *env, macros map[string][]ir.Clause) *ctx {
 	file := ""
 	if rt != nil {
 		file = rt.file
 	}
 	if macros == nil {
-		macros = map[string][]Clause{}
+		macros = map[string][]ir.Clause{}
 	}
 	return &ctx{rt: rt, macros: macros, macroEnv: env, file: file}
 }
@@ -352,9 +353,9 @@ func evalQuote(v syntax.Form, env *env, c *ctx, depth int) (Value, error) {
 func special(name string, args []syntax.Form, env *env, c *ctx) (Value, bool, error) {
 	switch name {
 	case "if":
-		clauses, err := parseIfArgs(args)
+		clauses, err := ir.ParseIfArgs(args)
 		if err != nil {
-			return Value{}, true, err
+			return Value{}, true, irErr(err)
 		}
 		for _, cl := range clauses {
 			pass := cl.Test == nil
@@ -532,13 +533,9 @@ func evalDot(args []syntax.Form, env *env, c *ctx) (Value, error) {
 }
 
 func makeFn(args []syntax.Form, env *env) (Value, error) {
-	parsed, err := parseFn(args)
+	_, clauses, err := ir.ParseFn(args)
 	if err != nil {
-		return Value{}, err
-	}
-	clauses := make([]Clause, len(parsed.clauses))
-	for i, cl := range parsed.clauses {
-		clauses[i] = Clause{Params: cl.Params, Body: cl.Body}
+		return Value{}, irErr(err)
 	}
 	return makeFnVal(clauses, env), nil
 }
@@ -703,15 +700,15 @@ func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
 	return Value{}, errMsg("not a function")
 }
 
-func bindPat(pat Pattern, val Value, env *env) bool {
+func bindPat(pat ir.Pattern, val Value, env *env) bool {
 	if !pat.Bind {
-		return pat.Value.Equal(val)
+		return ValueFromLiteralForm(pat.Lit).Equal(val)
 	}
 	env.set(pat.Name, val)
 	return true
 }
 
-func tryBind(params Params, call callParts, env *env) bool {
+func tryBind(params ir.Params, call callParts, env *env) bool {
 	if !params.Key {
 		if len(call.keys) > 0 {
 			return false

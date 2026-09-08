@@ -5,7 +5,7 @@ import (
 	"io"
 	"strings"
 
-	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/ir"
 	"deedles.dev/writ/syntax"
 )
 
@@ -52,7 +52,7 @@ func fnIsMulti(v syntax.Form) bool {
 	if v.Kind() != syntax.KindList || len(xs) == 0 || xs[0].Kind() != syntax.KindSymbol || xs[0].Name() != "fn" {
 		return false
 	}
-	kind, clauses, err := runtime.ParseFn(xs[1:])
+	kind, clauses, err := ir.ParseFn(xs[1:])
 	return err == nil && kind == "long" && len(clauses) > 1
 }
 
@@ -275,7 +275,7 @@ func (p *printer) formatBlock(v syntax.Form, indent int) string {
 	}
 
 	if headName == "if" {
-		clauses, err := runtime.ParseIfArgs(xs[1:])
+		clauses, err := ir.ParseIfArgs(xs[1:])
 		if err != nil {
 			cond := "nil"
 			if len(xs) > 1 {
@@ -337,7 +337,7 @@ func (p *printer) formatBlock(v syntax.Form, indent int) string {
 
 	if headName == "fn" {
 		rest := xs[1:]
-		kind, clauses, err := runtime.ParseFn(rest)
+		kind, clauses, err := ir.ParseFn(rest)
 		if err == nil && kind == "long" {
 			var lines []string
 			for i, c := range clauses {
