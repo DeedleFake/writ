@@ -9,6 +9,7 @@ import (
 	"strings"
 	"unique"
 
+	"deedles.dev/writ/ir"
 	"deedles.dev/writ/scanner"
 	"deedles.dev/writ/syntax"
 )
@@ -101,7 +102,7 @@ type mapData struct {
 }
 
 type fnVal struct {
-	clauses []Clause
+	clauses []ir.Clause
 	keys    []string
 	env     *env
 	native  Func
@@ -813,8 +814,6 @@ func (v Value) KeySpans() map[string]Span {
 // IsName reports whether v is the symbol name.
 func IsName(v Value, name string) bool { return isSymName(v, name) }
 
-// FormatSymbol renders a symbol name, quoting with ticks when needed.
-func FormatSymbol(name string) string { return formatSymName(name) }
 
 // Print renders v for display, matching the language printer.
 func Print(v Value) string { return printVal(v) }

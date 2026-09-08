@@ -3,6 +3,7 @@ package runtime
 import (
 	"maps"
 
+	"deedles.dev/writ/ir"
 	"deedles.dev/writ/syntax"
 )
 
@@ -236,7 +237,7 @@ func renameParamForm(form syntax.Form, imported []syntax.Form, subst map[string]
 func hygienicFnLike(v syntax.Form, imported []syntax.Form, subst map[string]string, name string, h *hygState) syntax.Form {
 	xs := v.Items()
 	if name == "fn" {
-		parsed, err := parseFn(xs[1:])
+		_, parsedClauses, err := ir.ParseFn(xs[1:])
 		if err != nil {
 			out := make([]syntax.Form, len(xs))
 			for i, x := range xs {
@@ -246,7 +247,7 @@ func hygienicFnLike(v syntax.Form, imported []syntax.Form, subst map[string]stri
 			return v
 		}
 		rebuilt := []syntax.Form{xs[0]}
-		for _, c := range parsed.clauses {
+		for _, c := range parsedClauses {
 			if c.ParamsForm != nil {
 				form, next := renameParamForm(*c.ParamsForm, imported, subst, h)
 				rebuilt = append(rebuilt, form)
@@ -357,7 +358,7 @@ func applyMacro(name string, f *fnVal, raw []syntax.Form, c *ctx, call syntax.Fo
 		}
 		return out, nil
 	}
-	var clauses []Clause
+	var clauses []ir.Clause
 	var defEnv *env
 	if f != nil {
 		clauses = f.clauses
@@ -637,12 +638,12 @@ func expandLet(v syntax.Form, env *env, c *ctx) (syntax.Form, error) {
 }
 
 func expandFn(v syntax.Form, env *env, c *ctx) (syntax.Form, error) {
-	parsed, err := parseFn(v.Items()[1:])
-	if err != nil || parsed.kind != "long" {
+	kind, parsedClauses, err := ir.ParseFn(v.Items()[1:])
+	if err != nil || kind != "long" {
 		return expandElems(v, env, c)
 	}
 	rebuilt := []syntax.Form{v.Items()[0]}
-	for i, cl := range parsed.clauses {
+	for i, cl := range parsedClauses {
 		if cl.ParamsForm != nil {
 			rebuilt = append(rebuilt, *cl.ParamsForm)
 		}
@@ -651,7 +652,7 @@ func expandFn(v syntax.Form, env *env, c *ctx) (syntax.Form, error) {
 			return syntax.Form{}, err
 		}
 		rebuilt = append(rebuilt, body...)
-		if i < len(parsed.clauses)-1 {
+		if i < len(parsedClauses)-1 {
 			rebuilt = append(rebuilt, syntax.Symbol("fn"))
 		}
 	}
@@ -661,7 +662,7 @@ func expandFn(v syntax.Form, env *env, c *ctx) (syntax.Form, error) {
 }
 
 func expandIf(v syntax.Form, env *env, c *ctx) (syntax.Form, error) {
-	clauses, err := parseIfArgs(v.Items()[1:])
+	clauses, err := ir.ParseIfArgs(v.Items()[1:])
 	if err != nil {
 		return expandElems(v, env, c)
 	}

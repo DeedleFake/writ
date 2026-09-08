@@ -1,6 +1,7 @@
 package runtime
 
 import (
+	"deedles.dev/writ/ir"
 	"deedles.dev/writ/syntax"
 	"maps"
 	"slices"
@@ -38,9 +39,14 @@ type Importer func(spec, fromFile string) (Value, error)
 
 const maxPendingAfter = 4096
 
+type boundHandler struct {
+	h   ir.Handler
+	env *env
+}
+
 type loadedPkg struct {
 	exports  Value
-	handlers []Handler
+	handlers []boundHandler
 	env      *env
 }
 
@@ -60,8 +66,8 @@ type Machine struct {
 
 	props    *mapData
 	env      *env
-	handlers []Handler
-	macros   map[string][]Clause
+	handlers []boundHandler
+	macros   map[string][]ir.Clause
 	file     string
 
 	loaded      map[string]*loadedPkg
@@ -224,7 +230,7 @@ func (m *Machine) ResetLocked() {
 }
 
 // Expand compiles and macro-expands forms. It does not parse source.
-func (m *Machine) Expand(forms []syntax.Form) (Program, error) {
+func (m *Machine) Expand(forms []syntax.Form) (ir.Program, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.BeginBudget()
@@ -232,7 +238,7 @@ func (m *Machine) Expand(forms []syntax.Form) (Program, error) {
 }
 
 // ExpandLocked is Expand without taking the lock.
-func (m *Machine) ExpandLocked(forms []syntax.Form) (Program, error) {
+func (m *Machine) ExpandLocked(forms []syntax.Form) (ir.Program, error) {
 	return compileForms(forms, m, false)
 }
 
@@ -258,18 +264,19 @@ func (m *Machine) EvalLocked(forms []syntax.Form) (Value, error) {
 	installFns(prog.Fns, env)
 	m.env = env
 	if m.macros == nil {
-		m.macros = map[string][]Clause{}
+		m.macros = map[string][]ir.Clause{}
 	}
 	maps.Copy(m.macros, toMacroTable(prog.Macros))
-	for i := range prog.Handlers {
-		prog.Handlers[i].env = env
+	var bound []boundHandler
+	for _, h := range prog.Handlers {
+		bound = append(bound, boundHandler{h: h, env: env})
 	}
 	c := newCtx(m, env, m.macros)
 	if err := evalNamedImports(prog.Imports, env, c); err != nil {
 		return Value{}, asError(err).withFile(file)
 	}
 	v, err := evalForms(prog.Boot, env, c)
-	m.handlers = append(m.handlers, prog.Handlers...)
+	m.handlers = append(m.handlers, bound...)
 	if err != nil {
 		return v, asError(err).withFile(file)
 	}
@@ -295,7 +302,7 @@ func (m *Machine) EvalModule(path string, forms []syntax.Form) (Value, error) {
 	}
 	names := map[string]Value{}
 	for _, f := range prog.Fns {
-		if !Exported(f.Name) {
+		if !ir.Exported(f.Name) {
 			continue
 		}
 		if v, ok := env.get(f.Name); ok {
@@ -303,7 +310,7 @@ func (m *Machine) EvalModule(path string, forms []syntax.Form) (Value, error) {
 		}
 	}
 	for _, mac := range prog.Macros {
-		if !Exported(mac.Name) {
+		if !ir.Exported(mac.Name) {
 			continue
 		}
 		if _, ok := names[mac.Name]; ok {
@@ -312,11 +319,12 @@ func (m *Machine) EvalModule(path string, forms []syntax.Form) (Value, error) {
 		names[mac.Name] = makeMacroVal(mac.Name, mac.Clauses, env)
 	}
 	exp := mapFromNames(names)
-	for i := range prog.Handlers {
-		prog.Handlers[i].env = env
+	var bound []boundHandler
+	for _, h := range prog.Handlers {
+		bound = append(bound, boundHandler{h: h, env: env})
 	}
-	m.rememberLoaded(path, &loadedPkg{exports: exp, handlers: prog.Handlers, env: env})
-	m.handlers = append(m.handlers, prog.Handlers...)
+	m.rememberLoaded(path, &loadedPkg{exports: exp, handlers: bound, env: env})
+	m.handlers = append(m.handlers, bound...)
 	return exp, nil
 }
 
@@ -377,7 +385,8 @@ func (m *Machine) FireLocked(event string, payload map[string]Value) error {
 	if haveSpec {
 		order = append(order, spec...)
 	}
-	for _, h := range m.handlers {
+	for _, bh := range m.handlers {
+		h := bh.h
 		if h.Event != event {
 			continue
 		}
@@ -411,7 +420,7 @@ func (m *Machine) FireLocked(event string, payload map[string]Value) error {
 				}
 				call = callParts{pos: pos, keys: map[string]Value{}}
 			}
-			parent := h.env
+			parent := bh.env
 			if parent == nil {
 				parent = m.env
 			}
@@ -452,7 +461,7 @@ func evalImport(args []syntax.Form, env *env, c *ctx) (Value, error) {
 	return c.rt.Import(v.s, c.file)
 }
 
-func evalNamedImports(imps []NamedImport, env *env, c *ctx) error {
+func evalNamedImports(imps []ir.NamedImport, env *env, c *ctx) error {
 	for _, imp := range imps {
 		path, err := evalVal(imp.PathForm, env, c)
 		if err != nil {
@@ -486,12 +495,6 @@ func PackageValue(p Package) Value {
 	}
 	maps.Copy(names, p.Vals)
 	return mapFromNames(names)
-}
-
-// Exported reports whether a top-level def/defm name is in a module export map.
-// Names that start with '-' are private to the defining script.
-func Exported(name string) bool {
-	return name != "" && name[0] != '-'
 }
 
 func mapFromNames(names map[string]Value) Value {
