@@ -9,6 +9,7 @@ import (
 
 	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/syntax"
+	"deedles.dev/writ/types"
 )
 
 func buildWasmHello(t *testing.T) string {
@@ -170,5 +171,52 @@ func TestWasmOpaqueBox(t *testing.T) {
 	}
 	if !v.Equal(runtime.Int64(2)) {
 		t.Fatalf("box: %v", v)
+	}
+}
+
+func TestWasmImportTypes(t *testing.T) {
+	wasm := buildWasmHello(t)
+	dir := t.TempDir()
+	ok := filepath.Join(dir, "ok.writ")
+	body := "(import m: \"" + filepath.ToSlash(wasm) + "\")\n(+ m.version 1)\n(m.greet \"ada\")\n"
+	if err := os.WriteFile(ok, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := New(WithAllowAbsoluteImports())
+	res := rt.CheckFile(ok)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("typed wasm ok: %v", res.Diagnostics)
+	}
+	bad := filepath.Join(dir, "bad.writ")
+	body = "(import m: \"" + filepath.ToSlash(wasm) + "\")\n(m.greet 1)\n"
+	if err := os.WriteFile(bad, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res = rt.CheckFile(bad)
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("expected greet int arg type error")
+	}
+}
+
+func TestRegisterPackageTypes(t *testing.T) {
+	rt := New()
+	rt.RegisterPackage("mathx", WithPackageTypes(runtime.Package{
+		Funcs: map[string]runtime.Func{
+			"double": func(args []runtime.Value) (runtime.Value, error) {
+				return runtime.Int64(args[0].BigInt().Int64() * 2), nil
+			},
+		},
+		Vals: map[string]runtime.Value{"two": runtime.Int64(2)},
+	}, map[string]types.Type{
+		"double": types.FnType(types.PosFn(types.IntType(), types.IntType())),
+		"two":    types.IntType(),
+	}))
+	res := rt.Check(rd(`(import m: "mathx") (+ (m.double 21) m.two)`))
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("typed package: %v", res.Diagnostics)
+	}
+	res = rt.Check(rd(`(import m: "mathx") (m.double "x")`))
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("expected double string type error")
 	}
 }
