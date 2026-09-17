@@ -12,6 +12,7 @@ import (
 	"deedles.dev/writ/parser"
 	"deedles.dev/writ/repl"
 	"deedles.dev/writ/runtime"
+	stdjson "deedles.dev/writ/stdlib/json"
 )
 
 func main() {
@@ -160,6 +161,7 @@ func cmdRepl(args []string) error {
 	opts := withSearch([]writ.Option{writ.WithStdout(os.Stdout)}, *search)
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
+	stdjson.Register(rt)
 	return (repl.REPL{
 		In:  os.Stdin,
 		Out: os.Stdout,
@@ -185,6 +187,7 @@ func cmdRun(args []string) error {
 	opts := withSearch([]writ.Option{writ.WithStdout(os.Stdout)}, *search)
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
+	stdjson.Register(rt)
 	if _, err := rt.EvalFile(file); err != nil {
 		return err
 	}
@@ -279,6 +282,7 @@ func cmdCheck(args []string) error {
 	opts := withSearch(nil, *search)
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
+	stdjson.Register(rt)
 	res := rt.CheckFile(file)
 	src := string(data)
 	for _, d := range res.Diagnostics {
