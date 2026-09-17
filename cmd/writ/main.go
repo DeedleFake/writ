@@ -161,7 +161,7 @@ func cmdRepl(args []string) error {
 	opts := withSearch([]writ.Option{writ.WithStdout(os.Stdout)}, *search)
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
-	stdjson.Register(rt)
+	rt.RegisterPackage("json", stdjson.Package())
 	return (repl.REPL{
 		In:  os.Stdin,
 		Out: os.Stdout,
@@ -187,7 +187,7 @@ func cmdRun(args []string) error {
 	opts := withSearch([]writ.Option{writ.WithStdout(os.Stdout)}, *search)
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
-	stdjson.Register(rt)
+	rt.RegisterPackage("json", stdjson.Package())
 	if _, err := rt.EvalFile(file); err != nil {
 		return err
 	}
@@ -282,7 +282,7 @@ func cmdCheck(args []string) error {
 	opts := withSearch(nil, *search)
 	rt := writ.New(opts...)
 	rt.RegisterPrint()
-	stdjson.Register(rt)
+	rt.RegisterPackage("json", stdjson.Package())
 	res := rt.CheckFile(file)
 	src := string(data)
 	for _, d := range res.Diagnostics {

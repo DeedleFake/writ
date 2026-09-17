@@ -239,11 +239,11 @@ func TestRegisterSmoke(t *testing.T) {
 	rt := writ.New()
 	_, err := rt.Eval(strings.NewReader(`(import "json")`))
 	if err == nil {
-		t.Fatal("New without Register: import should fail")
+		t.Fatal("New without RegisterPackage: import should fail")
 	}
 
 	rt2 := writ.New()
-	stdjson.Register(rt2)
+	rt2.RegisterPackage("json", stdjson.Package())
 	v, err := rt2.Eval(strings.NewReader(`
 (let [j: (import "json")]
   ((map-get j 'stringify) ((map-get j 'parse) "{\"a\": 1}")))

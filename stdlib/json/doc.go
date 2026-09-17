@@ -10,6 +10,6 @@
 // list (vector or call-shaped)→array; map→object with Name() keys;
 // fn/macro/native/syntax→error.
 //
-// Register installs the package under import path "json".
-// writ.New does not auto-register it.
+// Hosts install it with Runtime.RegisterPackage, for example
+// rt.RegisterPackage("json", json.Package()).
 package json

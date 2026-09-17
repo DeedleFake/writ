@@ -1,12 +1,8 @@
 package json
 
 import (
-	"deedles.dev/writ"
 	"deedles.dev/writ/runtime"
 )
-
-// ImportPath is the (import) name used by [Register].
-const ImportPath = "json"
 
 // Package returns the json stdlib package (parse, stringify).
 func Package() runtime.Package {
@@ -16,12 +12,6 @@ func Package() runtime.Package {
 			"stringify": stringify,
 		},
 	}
-}
-
-// Register installs [Package] under [ImportPath].
-// writ.New does not call Register.
-func Register(rt *writ.Runtime) {
-	rt.RegisterPackage(ImportPath, Package())
 }
 
 func parse(args []runtime.Value) (runtime.Value, error) {
