@@ -10,6 +10,6 @@
 // list (vector or call-shaped)→array; map→object with Name() keys;
 // fn/macro/native/syntax→error.
 //
-// Register installs the package under import path "stdlib/json".
+// Register installs the package under import path "json".
 // writ.New does not auto-register it.
 package json

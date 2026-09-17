@@ -6,7 +6,7 @@ import (
 )
 
 // ImportPath is the (import) name used by [Register].
-const ImportPath = "stdlib/json"
+const ImportPath = "json"
 
 // Package returns the json stdlib package (parse, stringify).
 func Package() runtime.Package {

@@ -237,7 +237,7 @@ func TestRoundTrip(t *testing.T) {
 
 func TestRegisterSmoke(t *testing.T) {
 	rt := writ.New()
-	_, err := rt.Eval(strings.NewReader(`(import "stdlib/json")`))
+	_, err := rt.Eval(strings.NewReader(`(import "json")`))
 	if err == nil {
 		t.Fatal("New without Register: import should fail")
 	}
@@ -245,7 +245,7 @@ func TestRegisterSmoke(t *testing.T) {
 	rt2 := writ.New()
 	stdjson.Register(rt2)
 	v, err := rt2.Eval(strings.NewReader(`
-(let [j: (import "stdlib/json")]
+(let [j: (import "json")]
   ((map-get j 'stringify) ((map-get j 'parse) "{\"a\": 1}")))
 `))
 	if err != nil {
