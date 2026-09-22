@@ -1,4 +1,4 @@
-package types
+package writ
 
 import (
 	"maps"
@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/scanner"
 	"deedles.dev/writ/syntax"
 )
@@ -534,7 +533,7 @@ func (chk *checker) typeImportPath(path syntax.Form, env typeEnv) Type {
 }
 
 func (chk *checker) typeIf(args []syntax.Form, env typeEnv, form syntax.Form) Type {
-	clauses, err := runtime.ParseIfArgs(args)
+	clauses, err := ParseIfArgs(args)
 	if err != nil {
 		chk.err(form, err.Error())
 		return tDyn(Any())
@@ -837,7 +836,7 @@ func (chk *checker) typeCallParts(raw []syntax.Form, env typeEnv, form syntax.Fo
 }
 
 func (chk *checker) typeFn(args []syntax.Form, env typeEnv, form syntax.Form) Type {
-	_, parsed, err := runtime.ParseFn(args)
+	_, parsed, err := ParseFn(args)
 	if err != nil {
 		chk.err(form, err.Error())
 		return tDyn(Any())
@@ -887,7 +886,7 @@ func (chk *checker) typePipe(args []syntax.Form, env typeEnv, form syntax.Form) 
 	return cur
 }
 
-func (chk *checker) bindParams(params runtime.Params, env typeEnv) {
+func (chk *checker) bindParams(params Params, env typeEnv) {
 	if !params.Key {
 		for _, p := range params.Pats {
 			if p.Bind {
@@ -911,7 +910,7 @@ func (chk *checker) bindParams(params runtime.Params, env typeEnv) {
 	}
 }
 
-func (chk *checker) promoteBinds(params runtime.Params, env typeEnv) {
+func (chk *checker) promoteBinds(params Params, env typeEnv) {
 	bump := func(name string) {
 		if t, ok := env[name]; ok {
 			env[name] = fromUsage(t)
@@ -938,7 +937,7 @@ func (chk *checker) promoteBinds(params runtime.Params, env typeEnv) {
 	}
 }
 
-func (chk *checker) typeClause(params runtime.Params, body []syntax.Form, parent typeEnv, paramsForm syntax.Form) FnClause {
+func (chk *checker) typeClause(params Params, body []syntax.Form, parent typeEnv, paramsForm syntax.Form) FnClause {
 	e := parent.clone()
 	chk.bindParams(params, e)
 	saved := chk.pass
@@ -951,7 +950,7 @@ func (chk *checker) typeClause(params runtime.Params, body []syntax.Form, parent
 	return chk.clauseFrom(params, e, ret)
 }
 
-func (chk *checker) typeMacroClause(params runtime.Params, body []syntax.Form, parent typeEnv, paramsForm syntax.Form) {
+func (chk *checker) typeMacroClause(params Params, body []syntax.Form, parent typeEnv, paramsForm syntax.Form) {
 	e := parent.clone()
 	chk.bindParams(params, e)
 	saved := chk.pass
@@ -977,7 +976,7 @@ func (chk *checker) macroForms(body []syntax.Form, env typeEnv) Type {
 	return last
 }
 
-func (chk *checker) clauseFrom(params runtime.Params, env typeEnv, ret Type) FnClause {
+func (chk *checker) clauseFrom(params Params, env typeEnv, ret Type) FnClause {
 	if !params.Key {
 		args := make([]Type, len(params.Pats))
 		for i, p := range params.Pats {
@@ -1723,7 +1722,7 @@ func mergeDiags(diags []Diagnostic) []Diagnostic {
 }
 
 // Check type-checks already-expanded forms and a compiled program.
-func Check(forms []syntax.Form, prog runtime.Program, cfg Config) CheckResult {
+func checkProgram(forms []syntax.Form, prog Program, cfg Config) CheckResult {
 	if len(forms) == 0 && len(prog.Boot) == 0 && len(prog.Fns) == 0 && len(prog.Handlers) == 0 && len(prog.Macros) == 0 && len(prog.Imports) == 0 {
 		return CheckResult{}
 	}
@@ -1733,7 +1732,7 @@ func Check(forms []syntax.Form, prog runtime.Program, cfg Config) CheckResult {
 	type fnForm struct {
 		name       string
 		nameForm   syntax.Form
-		params     runtime.Params
+		params     Params
 		body       []syntax.Form
 		paramsForm syntax.Form
 	}
@@ -1741,7 +1740,7 @@ func Check(forms []syntax.Form, prog runtime.Program, cfg Config) CheckResult {
 	type onForm struct {
 		event      string
 		form       syntax.Form
-		params     runtime.Params
+		params     Params
 		body       []syntax.Form
 		paramsForm syntax.Form
 	}
@@ -1777,7 +1776,7 @@ func Check(forms []syntax.Form, prog runtime.Program, cfg Config) CheckResult {
 			continue
 		}
 		if form.Kind() == syntax.KindList && len(form.Items()) > 0 && syntax.IsName(form.Items()[0], "defm") {
-			d, ok, err := runtime.AsDefForm(form, "defm")
+			d, ok, err := AsDefForm(form, "defm")
 			if err != nil {
 				chk.err(form, err.Error())
 				continue
@@ -1856,12 +1855,12 @@ func Check(forms []syntax.Form, prog runtime.Program, cfg Config) CheckResult {
 	return CheckResult{Diagnostics: diags, Hints: chk.hints, Export: exportCheckedType(prog, chk)}
 }
 
-func exportCheckedType(prog runtime.Program, chk *checker) Type {
+func exportCheckedType(prog Program, chk *checker) Type {
 	seen := map[string]struct{}{}
 	var names []string
 	types := map[string]Type{}
 	for _, f := range prog.Fns {
-		if !runtime.Exported(f.Name) {
+		if !Exported(f.Name) {
 			continue
 		}
 		if _, ok := seen[f.Name]; ok {
@@ -1876,7 +1875,7 @@ func exportCheckedType(prog runtime.Program, chk *checker) Type {
 		}
 	}
 	for _, m := range prog.Macros {
-		if !runtime.Exported(m.Name) {
+		if !Exported(m.Name) {
 			continue
 		}
 		if _, ok := seen[m.Name]; ok {
@@ -1897,7 +1896,7 @@ func exportCheckedType(prog runtime.Program, chk *checker) Type {
 	return tMap(fields, nil)
 }
 
-func (chk *checker) bindEvent(event string, params runtime.Params, env typeEnv) {
+func (chk *checker) bindEvent(event string, params Params, env typeEnv) {
 	spec, ok := chk.cfg.Events[event]
 	if !ok {
 		return

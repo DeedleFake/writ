@@ -8,40 +8,38 @@ import (
 	"strings"
 
 	"deedles.dev/writ/parser"
-	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/syntax"
-	"deedles.dev/writ/types"
 )
 
-func (rt *Runtime) loadImport(spec, fromFile string) (runtime.Value, error) {
+func (rt *Runtime) loadImport(spec, fromFile string) (Value, error) {
 	if pkg, ok := rt.pkgs[spec]; ok {
-		return runtime.PackageValue(pkg), nil
+		return PackageValue(pkg), nil
 	}
 	path, kind, err := rt.resolveImport(spec, fromFile)
 	if err != nil {
-		return runtime.Value{}, err
+		return Value{}, err
 	}
 	if kind == "pkg" {
-		return runtime.PackageValue(rt.pkgs[path]), nil
+		return PackageValue(rt.pkgs[path]), nil
 	}
 	if rt.m.LoadingCycle(path) {
-		return runtime.Value{}, syntax.Errorf("import cycle: %s", strings.Join(append(rt.m.LoadingPath(), path), " -> "))
+		return Value{}, syntax.Errorf("import cycle: %s", strings.Join(append(rt.m.LoadingPath(), path), " -> "))
 	}
 	if exp, ok := rt.m.Loaded(path); ok {
 		return exp, nil
 	}
 	if kind == "wasm" {
-		pkg, err := runtime.LoadWasm(path)
+		pkg, err := LoadWasm(path)
 		if err != nil {
-			return runtime.Value{}, err
+			return Value{}, err
 		}
-		exp := runtime.PackageValue(pkg)
+		exp := PackageValue(pkg)
 		rt.m.RememberPackage(path, exp)
 		return exp, nil
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return runtime.Value{}, err
+		return Value{}, err
 	}
 	defer f.Close()
 	rt.m.PushLoading(path)
@@ -51,7 +49,7 @@ func (rt *Runtime) loadImport(spec, fromFile string) (runtime.Value, error) {
 	defer rt.m.SetFile(prev)
 	forms, err := parser.Parse(f)
 	if err != nil {
-		return runtime.Value{}, parseErr(err, path)
+		return Value{}, parseErr(err, path)
 	}
 	return rt.m.EvalModule(path, forms)
 }
@@ -157,7 +155,7 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 	return "", "", syntax.Errorf("cannot find import %q", spec)
 }
 
-func packageType(p runtime.Package) types.Type {
+func packageType(p Package) Type {
 	keys := make([]string, 0, len(p.Funcs)+len(p.Vals)+len(p.Macros))
 	seen := map[string]struct{}{}
 	for k := range p.Funcs {
@@ -176,23 +174,23 @@ func packageType(p runtime.Package) types.Type {
 		}
 	}
 	sort.Strings(keys)
-	fields := make([]types.FnKey, 0, len(keys))
+	fields := make([]FnKey, 0, len(keys))
 	for _, k := range keys {
-		t := types.Any()
+		t := Any()
 		_, isFn := p.Funcs[k]
 		_, isMac := p.Macros[k]
 		if isFn || isMac {
-			t = types.FnType(types.FnClause{Result: types.Dynamic(types.Any()), Rest: true})
+			t = FnType(FnClause{Result: Dynamic(Any()), Rest: true})
 		}
-		fields = append(fields, types.FnKey{Name: k, Type: t})
+		fields = append(fields, FnKey{Name: k, Type: t})
 	}
-	return types.MapType(fields, nil)
+	return MapType(fields, nil)
 }
 
-func mapExportType(v runtime.Value) types.Type {
-	if v.Kind() != runtime.KindMap {
-		anyT := types.Any()
-		return types.Dynamic(types.MapType(nil, &anyT))
+func mapExportType(v Value) Type {
+	if v.Kind() != KindMap {
+		anyT := Any()
+		return Dynamic(MapType(nil, &anyT))
 	}
 	pairs := v.Pairs()
 	keys := make([]string, 0, len(pairs))
@@ -200,31 +198,31 @@ func mapExportType(v runtime.Value) types.Type {
 		keys = append(keys, p.Key.Name())
 	}
 	sort.Strings(keys)
-	fields := make([]types.FnKey, 0, len(keys))
+	fields := make([]FnKey, 0, len(keys))
 	for _, k := range keys {
 		val, _ := v.MapGet(k)
-		t := types.Any()
-		if val.Kind() == runtime.KindFn || val.Kind() == runtime.KindMacro {
-			t = types.FnType(types.FnClause{Result: types.Dynamic(types.Any()), Rest: true})
+		t := Any()
+		if val.Kind() == KindFn || val.Kind() == KindMacro {
+			t = FnType(FnClause{Result: Dynamic(Any()), Rest: true})
 		}
-		fields = append(fields, types.FnKey{Name: k, Type: t})
+		fields = append(fields, FnKey{Name: k, Type: t})
 	}
-	return types.MapType(fields, nil)
+	return MapType(fields, nil)
 }
 
-func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagnostic, error) {
+func (rt *Runtime) importType(spec, fromFile string) (Type, []Diagnostic, error) {
 	if pkg, ok := rt.pkgs[spec]; ok {
 		return packageType(pkg), nil, nil
 	}
 	path, kind, err := rt.resolveImport(spec, fromFile)
 	if err != nil {
-		return types.Type{}, nil, err
+		return Type{}, nil, err
 	}
 	if kind == "pkg" {
 		return packageType(rt.pkgs[path]), nil, nil
 	}
 	if slices.Contains(rt.checkLoading, path) {
-		return types.Type{}, nil, syntax.Errorf("import cycle: %s", spec)
+		return Type{}, nil, syntax.Errorf("import cycle: %s", spec)
 	}
 	if rt.exportCache != nil {
 		if e, ok := rt.exportCache[path]; ok {
@@ -235,17 +233,17 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 		if exp, ok := rt.m.Loaded(path); ok {
 			return mapExportType(exp), nil, nil
 		}
-		pkg, err := runtime.LoadWasm(path)
+		pkg, err := LoadWasm(path)
 		if err != nil {
-			return types.Type{}, nil, err
+			return Type{}, nil, err
 		}
-		exp := runtime.PackageValue(pkg)
+		exp := PackageValue(pkg)
 		rt.m.RememberPackage(path, exp)
 		return packageType(pkg), nil, nil
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return types.Type{}, nil, err
+		return Type{}, nil, err
 	}
 	defer f.Close()
 	prev := rt.m.File()
@@ -255,21 +253,21 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 	diags := prefixImportDiags(path, res.Diagnostics)
 	for _, d := range res.Diagnostics {
 		if strings.Contains(d.Message, "cycle") {
-			return types.Type{}, diags, syntax.ErrorMsg(path + ": " + d.Message)
+			return Type{}, diags, syntax.ErrorMsg(path + ": " + d.Message)
 		}
 	}
 	if e, ok := rt.exportCache[path]; ok {
 		return e.t, diags, nil
 	}
-	anyT := types.Any()
-	return types.Dynamic(types.MapType(nil, &anyT)), diags, nil
+	anyT := Any()
+	return Dynamic(MapType(nil, &anyT)), diags, nil
 }
 
-func prefixImportDiags(path string, diags []types.Diagnostic) []types.Diagnostic {
+func prefixImportDiags(path string, diags []Diagnostic) []Diagnostic {
 	if len(diags) == 0 {
 		return nil
 	}
-	out := make([]types.Diagnostic, len(diags))
+	out := make([]Diagnostic, len(diags))
 	for i, d := range diags {
 		if path != "" && !strings.HasPrefix(d.Message, path) {
 			d.Message = path + ": " + d.Message

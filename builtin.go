@@ -1,4 +1,4 @@
-package runtime
+package writ
 
 import (
 	"math"
@@ -831,7 +831,7 @@ func mapSetPath(m Value, path []string, val Value, ctx string) (Value, error) {
 	return goSet(m, 0)
 }
 
-func getPropPath(rt *Machine, path []string, ctx string) (Value, error) {
+func getPropPath(rt *machine, path []string, ctx string) (Value, error) {
 	if rt == nil {
 		return Nil, nil
 	}
@@ -845,7 +845,7 @@ func getPropPath(rt *Machine, path []string, ctx string) (Value, error) {
 	return mapGetPath(root, path[1:], ctx)
 }
 
-func setPropPath(rt *Machine, path []string, val Value, ctx string) (Value, error) {
+func setPropPath(rt *machine, path []string, val Value, ctx string) (Value, error) {
 	if rt == nil {
 		return val, nil
 	}

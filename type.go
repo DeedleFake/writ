@@ -1,4 +1,4 @@
-package types
+package writ
 
 import (
 	"reflect"
@@ -6,7 +6,6 @@ import (
 	"strings"
 	"sync"
 
-	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/syntax"
 )
 
@@ -165,7 +164,7 @@ func nativeOf(rt reflect.Type) Type {
 
 // Native maps a Go host type to (opaque from host named …) for in-process
 // RegisterBuiltin / RegisterPackage. Encode uses package/name, not reflect IDs.
-func Native[T any]() Type {
+func NativeType[T any]() Type {
 	return nativeOf(reflect.TypeFor[T]())
 }
 
@@ -398,7 +397,7 @@ func printType(t Type, aliases []Alias) string {
 		if !t.has {
 			return "symbol"
 		}
-		return "'" + runtime.FormatSymbol(t.s)
+		return "'" + FormatSymbol(t.s)
 	case tyUSym:
 		return "unknown_symbol"
 	case tyEmptyList:
@@ -416,7 +415,7 @@ func printType(t Type, aliases []Alias) string {
 	case tyMap:
 		var parts []string
 		for _, f := range t.fields {
-			parts = append(parts, "'"+runtime.FormatSymbol(f.name)+": "+printType(f.t, aliases))
+			parts = append(parts, "'"+FormatSymbol(f.name)+": "+printType(f.t, aliases))
 		}
 		if t.rest != nil {
 			parts = append(parts, "symbol: "+printType(*t.rest, aliases))
@@ -1026,17 +1025,17 @@ func onlyFalsy(t Type) Type {
 	return tOr([]Type{intersect(t, NilType()), intersect(t, FalseType())})
 }
 
-func kindOf(v runtime.Value) Type {
+func kindOf(v Value) Type {
 	switch v.Kind() {
-	case runtime.KindInt:
+	case KindInt:
 		return IntType()
-	case runtime.KindFloat:
+	case KindFloat:
 		return FloatType()
-	case runtime.KindString:
+	case KindString:
 		return StringType()
-	case runtime.KindSymbol:
+	case KindSymbol:
 		return ExactSymbol(v.Name())
-	case runtime.KindList:
+	case KindList:
 		if v.IsVec() {
 			var items []Type
 			for _, x := range v.Items() {
@@ -1048,7 +1047,7 @@ func kindOf(v runtime.Value) Type {
 			return tTuple(items)
 		}
 		return Any()
-	case runtime.KindMap:
+	case KindMap:
 		if len(v.Pairs()) == 0 {
 			return EmptyMapType()
 		}
@@ -1057,11 +1056,11 @@ func kindOf(v runtime.Value) Type {
 			fields = append(fields, mapField{name: pair.Key.Name(), t: kindOf(pair.Value)})
 		}
 		return tMap(fields, nil)
-	case runtime.KindFn:
+	case KindFn:
 		return FnType()
-	case runtime.KindMacro:
+	case KindMacro:
 		return MacroType()
-	case runtime.KindNative:
+	case KindNative:
 		nv, ok := v.Native()
 		if !ok {
 			return Any()
@@ -1070,7 +1069,7 @@ func kindOf(v runtime.Value) Type {
 			return OpaqueType()
 		}
 		return nativeOf(reflect.TypeOf(nv))
-	case runtime.KindSyntax:
+	case KindSyntax:
 		return Any()
 	default:
 		return Any()

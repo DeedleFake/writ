@@ -7,7 +7,6 @@ import (
 	"strings"
 	"testing"
 
-	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/syntax"
 )
 
@@ -39,7 +38,7 @@ func TestWasmImportGreet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(runtime.Int64(1)) {
+	if !v.Equal(Int64(1)) {
 		t.Fatalf("version: %v", v)
 	}
 }
@@ -57,7 +56,7 @@ func TestWasmImportMacro(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(runtime.Int64(42)) {
+	if !v.Equal(Int64(42)) {
 		t.Fatalf("unless: %v", v)
 	}
 }
@@ -84,7 +83,7 @@ func TestWasmLoadsByDefault(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(runtime.Int64(1)) {
+	if !v.Equal(Int64(1)) {
 		t.Fatalf("version: %v", v)
 	}
 }
@@ -129,8 +128,8 @@ func TestWasmCheckLoadError(t *testing.T) {
 
 func TestRegisterPackageMacro(t *testing.T) {
 	rt := New()
-	rt.RegisterPackage("mac", runtime.Package{
-		Macros: map[string]runtime.Macro{
+	rt.RegisterPackage("mac", Package{
+		Macros: map[string]Macro{
 			"unless": func(args []syntax.Form) (syntax.Form, error) {
 				if len(args) < 2 {
 					return syntax.Form{}, syntax.ErrorMsg("unless needs 2 args")
@@ -151,7 +150,7 @@ func TestRegisterPackageMacro(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(runtime.Int64(9)) {
+	if !v.Equal(Int64(9)) {
 		t.Fatalf("native macro: %v", v)
 	}
 }
@@ -168,7 +167,7 @@ func TestWasmOpaqueBox(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(runtime.Int64(2)) {
+	if !v.Equal(Int64(2)) {
 		t.Fatalf("box: %v", v)
 	}
 }

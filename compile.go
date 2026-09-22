@@ -1,4 +1,4 @@
-package runtime
+package writ
 
 import (
 	"maps"
@@ -121,7 +121,7 @@ func (s *compileState) takenByImport(name string) error {
 	return nil
 }
 
-func sessionImportBinding(rt *Machine, session bool, name string) error {
+func sessionImportBinding(rt *machine, session bool, name string) error {
 	if !session || rt == nil {
 		return nil
 	}
@@ -139,7 +139,7 @@ func sessionImportBinding(rt *Machine, session bool, name string) error {
 	return nil
 }
 
-func sessionDefVsImport(rt *Machine, session bool, name string) error {
+func sessionDefVsImport(rt *machine, session bool, name string) error {
 	if !session || rt == nil || rt.env == nil {
 		return nil
 	}
@@ -149,7 +149,7 @@ func sessionDefVsImport(rt *Machine, session bool, name string) error {
 	return nil
 }
 
-func (s *compileState) addImports(imps []NamedImport, rt *Machine, session bool) error {
+func (s *compileState) addImports(imps []NamedImport, rt *machine, session bool) error {
 	for _, imp := range imps {
 		if scanner.IsKeyword(imp.Name) || scanner.IsBuiltin(imp.Name) {
 			return errf("cannot redefine %s", imp.Name)
@@ -272,7 +272,7 @@ func (s *compileState) addOn(ev syntax.Form, paramsForm syntax.Form, body []synt
 	return nil
 }
 
-func sessionClash(rt *Machine, session bool, name string, asMacro bool) error {
+func sessionClash(rt *machine, session bool, name string, asMacro bool) error {
 	if !session || rt == nil {
 		return nil
 	}
@@ -291,7 +291,7 @@ func sessionClash(rt *Machine, session bool, name string, asMacro bool) error {
 }
 
 // session is true for Eval so later lines expand with macros from earlier Evals.
-func compileForms(forms []syntax.Form, rt *Machine, session bool) (Program, error) {
+func compileForms(forms []syntax.Form, rt *machine, session bool) (Program, error) {
 	s := newCompileState()
 	for _, form := range forms {
 		if form.Kind() == syntax.KindComment {

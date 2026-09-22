@@ -1,4 +1,4 @@
-package runtime
+package writ
 
 import (
 	"time"
@@ -8,7 +8,7 @@ import (
 )
 
 type ctx struct {
-	rt       *Machine
+	rt       *machine
 	macros   map[string][]Clause
 	macroEnv *env
 	file     string
@@ -17,7 +17,7 @@ type ctx struct {
 
 const maxEvalDepth = 8000
 
-func newCtx(rt *Machine, env *env, macros map[string][]Clause) *ctx {
+func newCtx(rt *machine, env *env, macros map[string][]Clause) *ctx {
 	file := ""
 	if rt != nil {
 		file = rt.file

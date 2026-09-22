@@ -6,72 +6,72 @@
 package main
 
 import (
-	"deedles.dev/writ/runtime"
+	"deedles.dev/writ"
 	"deedles.dev/writ/syntax"
 )
 
 func main() {}
 
 func init() {
-	runtime.ExportGuestPackage(runtime.Package{
-		Funcs: map[string]runtime.Func{
+	writ.ExportGuestPackage(writ.Package{
+		Funcs: map[string]writ.Func{
 			"greet": greet,
 			"mk":    mkBox,
 			"inc":   incBox,
 			"get":   getBox,
 			"echo":  echoVal,
 		},
-		Macros: map[string]runtime.Macro{
+		Macros: map[string]writ.Macro{
 			"unless": unless,
 		},
-		Vals: map[string]runtime.Value{
-			"version": runtime.Int64(1),
+		Vals: map[string]writ.Value{
+			"version": writ.Int64(1),
 		},
 	})
 }
 
 type box struct{ n int64 }
 
-func mkBox(args []runtime.Value) (runtime.Value, error) {
-	return runtime.Native(&box{}), nil
+func mkBox(args []writ.Value) (writ.Value, error) {
+	return writ.Native(&box{}), nil
 }
 
-func echoVal(args []runtime.Value) (runtime.Value, error) {
+func echoVal(args []writ.Value) (writ.Value, error) {
 	if len(args) < 1 {
-		return runtime.Nil, nil
+		return writ.Nil, nil
 	}
 	return args[0], nil
 }
 
-func incBox(args []runtime.Value) (runtime.Value, error) {
+func incBox(args []writ.Value) (writ.Value, error) {
 	if len(args) < 1 {
-		return runtime.Nil, syntax.ErrorMsg("want box")
+		return writ.Nil, syntax.ErrorMsg("want box")
 	}
 	b, ok := args[0].As[*box]()
 	if !ok || b == nil {
-		return runtime.Nil, syntax.ErrorMsg("want box")
+		return writ.Nil, syntax.ErrorMsg("want box")
 	}
 	b.n++
 	return args[0], nil
 }
 
-func getBox(args []runtime.Value) (runtime.Value, error) {
+func getBox(args []writ.Value) (writ.Value, error) {
 	if len(args) < 1 {
-		return runtime.Nil, syntax.ErrorMsg("want box")
+		return writ.Nil, syntax.ErrorMsg("want box")
 	}
 	b, ok := args[0].As[*box]()
 	if !ok || b == nil {
-		return runtime.Nil, syntax.ErrorMsg("want box")
+		return writ.Nil, syntax.ErrorMsg("want box")
 	}
-	return runtime.Int64(b.n), nil
+	return writ.Int64(b.n), nil
 }
 
-func greet(args []runtime.Value) (runtime.Value, error) {
+func greet(args []writ.Value) (writ.Value, error) {
 	name := "world"
-	if len(args) > 0 && args[0].Kind() == runtime.KindString {
+	if len(args) > 0 && args[0].Kind() == writ.KindString {
 		name = args[0].Text()
 	}
-	return runtime.String("hello, " + name), nil
+	return writ.String("hello, " + name), nil
 }
 
 func unless(args []syntax.Form) (syntax.Form, error) {
