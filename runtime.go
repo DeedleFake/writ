@@ -332,8 +332,8 @@ func (rt *Runtime) Fire(event string, payload map[string]Value) error {
 	return rt.m.FireLocked(event, payload)
 }
 
-func (rt *Runtime) typeConfig(file string) Config {
-	return Config{
+func (rt *Runtime) typeConfig(file string) config {
+	return config{
 		Events:  rt.events,
 		Aliases: rt.aliases,
 		Extra:   rt.extraClauses,

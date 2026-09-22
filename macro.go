@@ -3,6 +3,7 @@ package writ
 import (
 	"maps"
 
+	"deedles.dev/writ/parser"
 	"deedles.dev/writ/syntax"
 )
 
@@ -357,7 +358,7 @@ func applyMacro(name string, f *fnVal, raw []syntax.Form, c *ctx, call syntax.Fo
 		}
 		return out, nil
 	}
-	var clauses []Clause
+	var clauses []clause
 	var defEnv *env
 	if f != nil {
 		clauses = f.clauses
@@ -381,7 +382,7 @@ func applyMacro(name string, f *fnVal, raw []syntax.Form, c *ctx, call syntax.Fo
 	}
 	allPos, allKey := true, true
 	for _, cl := range clauses {
-		if cl.Params.Key {
+		if cl.params.Key {
 			allPos = false
 		} else {
 			allKey = false
@@ -398,7 +399,7 @@ func applyMacro(name string, f *fnVal, raw []syntax.Form, c *ctx, call syntax.Fo
 	}
 	for _, clause := range clauses {
 		child := makeEnv(defEnv)
-		if !tryBind(clause.Params, parts, child) {
+		if !tryBind(clause.params, parts, child) {
 			continue
 		}
 		frags, err := evalSpread(clause.Body, child, c, false)
@@ -661,7 +662,7 @@ func expandFn(v syntax.Form, env *env, c *ctx) (syntax.Form, error) {
 }
 
 func expandIf(v syntax.Form, env *env, c *ctx) (syntax.Form, error) {
-	clauses, err := ParseIfArgs(v.Items()[1:])
+	clauses, err := parser.ParseIfArgs(v.Items()[1:])
 	if err != nil {
 		return expandElems(v, env, c)
 	}
