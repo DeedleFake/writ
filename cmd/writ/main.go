@@ -11,7 +11,6 @@ import (
 	"deedles.dev/writ"
 	"deedles.dev/writ/parser"
 	"deedles.dev/writ/repl"
-	"deedles.dev/writ/runtime"
 )
 
 func main() {
@@ -188,7 +187,7 @@ func cmdRun(args []string) error {
 	if _, err := rt.EvalFile(file); err != nil {
 		return err
 	}
-	if mainFn, ok := rt.Lookup("main"); ok && mainFn.Kind() == runtime.KindFn {
+	if mainFn, ok := rt.Lookup("main"); ok && mainFn.Kind() == writ.KindFn {
 		_, err := rt.Apply(mainFn, nil)
 		return err
 	}

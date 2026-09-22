@@ -12,7 +12,6 @@ import (
 
 	"deedles.dev/writ"
 	"deedles.dev/writ/parser"
-	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/syntax"
 )
 
@@ -118,7 +117,7 @@ func (r REPL) Run(ctx context.Context) error {
 			fmt.Fprintln(errW, err)
 			continue
 		}
-		fmt.Fprintln(out, runtime.Print(v))
+		fmt.Fprintln(out, writ.Print(v))
 	}
 }
 

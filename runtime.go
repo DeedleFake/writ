@@ -9,32 +9,31 @@ import (
 	"strings"
 
 	"deedles.dev/writ/parser"
-	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/scanner"
-	"deedles.dev/writ/types"
+	"deedles.dev/writ/syntax"
 )
 
 // Runtime evaluates scripts, holds the script store, and hosts packages.
 // Public methods are safe for concurrent use.
 type Runtime struct {
-	m *runtime.Machine
+	m *machine
 
 	search        []string
 	stdout        io.Writer
 	allowAbsolute bool
 
-	pkgs         map[string]runtime.Package
-	extraClauses map[string][]types.FnClause
-	events       map[string][]types.PayloadKey
-	aliases      []types.Alias
+	pkgs         map[string]Package
+	extraClauses map[string][]FnClause
+	events       map[string][]PayloadKey
+	aliases      []Alias
 
 	exportCache  map[string]cachedExport
 	checkLoading []string
 }
 
 type cachedExport struct {
-	t     types.Type
-	diags []types.Diagnostic
+	t     Type
+	diags []Diagnostic
 }
 
 // Option configures a [Runtime].
@@ -46,7 +45,7 @@ func WithSearchPath(paths ...string) Option {
 }
 
 // WithScheduler replaces the default time.AfterFunc scheduler.
-func WithScheduler(s runtime.Scheduler) Option {
+func WithScheduler(s Scheduler) Option {
 	return func(rt *Runtime) { rt.m.SetScheduler(s) }
 }
 
@@ -73,14 +72,14 @@ func WithAllowAbsoluteImports() Option {
 	return func(rt *Runtime) { rt.allowAbsolute = true }
 }
 
-// New constructs a runtime.
+// New constructs a
 func New(opts ...Option) *Runtime {
 	rt := &Runtime{
-		m:            runtime.New(),
+		m:            newMachine(),
 		stdout:       io.Discard,
-		pkgs:         map[string]runtime.Package{},
-		extraClauses: map[string][]types.FnClause{},
-		events:       map[string][]types.PayloadKey{},
+		pkgs:         map[string]Package{},
+		extraClauses: map[string][]FnClause{},
+		events:       map[string][]PayloadKey{},
 		exportCache:  map[string]cachedExport{},
 	}
 	rt.m.Import = rt.loadImport
@@ -92,32 +91,32 @@ func New(opts ...Option) *Runtime {
 
 // RegisterPackage installs an in-process package. (import "name") loads it
 // without touching the filesystem.
-func (rt *Runtime) RegisterPackage(name string, pkg runtime.Package) {
+func (rt *Runtime) RegisterPackage(name string, pkg Package) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	if rt.pkgs == nil {
-		rt.pkgs = map[string]runtime.Package{}
+		rt.pkgs = map[string]Package{}
 	}
 	rt.pkgs[name] = pkg
 }
 
 // RegisterBuiltin adds a host function visible as a call head.
-func (rt *Runtime) RegisterBuiltin(name string, call runtime.Func, clauses ...types.FnClause) error {
+func (rt *Runtime) RegisterBuiltin(name string, call Func, clauses ...FnClause) error {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	return rt.registerBuiltin(name, call, clauses...)
 }
 
-func (rt *Runtime) registerBuiltin(name string, call runtime.Func, clauses ...types.FnClause) error {
+func (rt *Runtime) registerBuiltin(name string, call Func, clauses ...FnClause) error {
 	if scanner.IsKeyword(name) {
-		return runtime.Errorf("cannot redefine %s", name)
+		return syntax.Errorf("cannot redefine %s", name)
 	}
 	if scanner.IsCoreBuiltin(name) {
-		return runtime.Errorf("cannot redefine %s", name)
+		return syntax.Errorf("cannot redefine %s", name)
 	}
 	rt.m.RegisterExtra(name, call)
 	if rt.extraClauses == nil {
-		rt.extraClauses = map[string][]types.FnClause{}
+		rt.extraClauses = map[string][]FnClause{}
 	}
 	rt.extraClauses[name] = clauses
 	return nil
@@ -132,24 +131,24 @@ func (rt *Runtime) RegisterPrint() {
 	if w == nil {
 		w = os.Stdout
 	}
-	_ = rt.registerBuiltin("print", func(args []runtime.Value) (runtime.Value, error) {
+	_ = rt.registerBuiltin("print", func(args []Value) (Value, error) {
 		for _, a := range args {
-			_, _ = io.WriteString(w, runtime.Print(a))
+			_, _ = io.WriteString(w, Print(a))
 		}
 		_, _ = io.WriteString(w, "\n")
-		return runtime.Nil, nil
-	}, types.FnClause{Result: types.NilType(), Rest: true})
+		return Nil, nil
+	}, FnClause{Result: NilType(), Rest: true})
 }
 
 // RegisterEvent declares an event for (on ...) and [Runtime.Fire].
 // If any events are registered, unknown event names are type errors.
-func (rt *Runtime) RegisterEvent(name string, keys ...types.PayloadKey) {
+func (rt *Runtime) RegisterEvent(name string, keys ...PayloadKey) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	if rt.events == nil {
-		rt.events = map[string][]types.PayloadKey{}
+		rt.events = map[string][]PayloadKey{}
 	}
-	rt.events[name] = append([]types.PayloadKey{}, keys...)
+	rt.events[name] = append([]PayloadKey{}, keys...)
 	names := make([]string, len(keys))
 	for i, k := range keys {
 		names[i] = k.Name
@@ -158,7 +157,7 @@ func (rt *Runtime) RegisterEvent(name string, keys ...types.PayloadKey) {
 }
 
 // RegisterAlias names a closed union of exact symbols for type display
-// and host domain types.
+// and host domain
 func (rt *Runtime) RegisterAlias(name string, members ...string) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
@@ -166,22 +165,22 @@ func (rt *Runtime) RegisterAlias(name string, members ...string) {
 }
 
 func (rt *Runtime) registerAlias(name string, members ...string) {
-	ts := make([]types.Type, len(members))
+	ts := make([]Type, len(members))
 	for i, m := range members {
-		ts[i] = types.ExactSymbol(m)
+		ts[i] = ExactSymbol(m)
 	}
-	rt.aliases = append(rt.aliases, types.Alias{Name: name, Type: types.Union(ts...), Members: append([]string{}, members...)})
+	rt.aliases = append(rt.aliases, Alias{Name: name, Type: Union(ts...), Members: append([]string{}, members...)})
 }
 
 // RegisterTypeAlias names an arbitrary type.
-func (rt *Runtime) RegisterTypeAlias(name string, t types.Type) {
+func (rt *Runtime) RegisterTypeAlias(name string, t Type) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
-	rt.aliases = append(rt.aliases, types.Alias{Name: name, Type: t})
+	rt.aliases = append(rt.aliases, Alias{Name: name, Type: t})
 }
 
 // AliasType returns the type last registered under name.
-func (rt *Runtime) AliasType(name string) (types.Type, bool) {
+func (rt *Runtime) AliasType(name string) (Type, bool) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	for _, v := range slices.Backward(rt.aliases) {
@@ -189,11 +188,11 @@ func (rt *Runtime) AliasType(name string) (types.Type, bool) {
 			return v.Type, true
 		}
 	}
-	return types.Type{}, false
+	return Type{}, false
 }
 
 // SetScheduler replaces the after scheduler.
-func (rt *Runtime) SetScheduler(s runtime.Scheduler) {
+func (rt *Runtime) SetScheduler(s Scheduler) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	rt.m.SetScheduler(s)
@@ -207,21 +206,21 @@ func (rt *Runtime) SetAfterError(fn func(error)) {
 }
 
 // Lookup returns a top-level binding.
-func (rt *Runtime) Lookup(name string) (runtime.Value, bool) {
+func (rt *Runtime) Lookup(name string) (Value, bool) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	return rt.m.LookupLocked(name)
 }
 
 // GetProp reads the script store.
-func (rt *Runtime) GetProp(path ...string) runtime.Value {
+func (rt *Runtime) GetProp(path ...string) Value {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	return rt.m.GetPropLocked(path...)
 }
 
 // SetProp writes the script store. nil deletes.
-func (rt *Runtime) SetProp(val runtime.Value, path ...string) error {
+func (rt *Runtime) SetProp(val Value, path ...string) error {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	return rt.m.SetPropLocked(val, path...)
@@ -237,7 +236,7 @@ func (rt *Runtime) Reset() {
 }
 
 // Check type-checks source from r.
-func (rt *Runtime) Check(r io.Reader) types.CheckResult {
+func (rt *Runtime) Check(r io.Reader) CheckResult {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	rt.m.BeginBudget()
@@ -247,10 +246,10 @@ func (rt *Runtime) Check(r io.Reader) types.CheckResult {
 }
 
 // CheckFile type-checks a file.
-func (rt *Runtime) CheckFile(path string) types.CheckResult {
+func (rt *Runtime) CheckFile(path string) CheckResult {
 	f, err := os.Open(path)
 	if err != nil {
-		return types.CheckResult{Diagnostics: []types.Diagnostic{{Message: err.Error()}}}
+		return CheckResult{Diagnostics: []Diagnostic{{Message: err.Error()}}}
 	}
 	defer f.Close()
 	abs, _ := filepath.Abs(path)
@@ -272,13 +271,13 @@ func (rt *Runtime) CheckFile(path string) types.CheckResult {
 // calls expand using those macros. Redefining a function replaces it
 // (clauses are not merged across calls). A name cannot be both a
 // function and a macro. (on ...) handlers accumulate across Eval calls.
-func (rt *Runtime) Eval(r io.Reader) (runtime.Value, error) {
+func (rt *Runtime) Eval(r io.Reader) (Value, error) {
 	forms, err := parser.Parse(r)
 	if err != nil {
 		rt.m.Lock()
 		file := rt.m.File()
 		rt.m.Unlock()
-		return runtime.Value{}, parseErr(err, file)
+		return Value{}, parseErr(err, file)
 	}
 	rt.m.Lock()
 	defer rt.m.Unlock()
@@ -289,10 +288,10 @@ func (rt *Runtime) Eval(r io.Reader) (runtime.Value, error) {
 // EvalFile evaluates a file's boot forms. It does not call main.
 // Persistence is the same as [Runtime.Eval]; call [Runtime.Reset]
 // before reloading a file if (on ...) handlers should not stack.
-func (rt *Runtime) EvalFile(path string) (runtime.Value, error) {
+func (rt *Runtime) EvalFile(path string) (Value, error) {
 	f, err := os.Open(path)
 	if err != nil {
-		return runtime.Value{}, err
+		return Value{}, err
 	}
 	defer f.Close()
 	abs, err := filepath.Abs(path)
@@ -301,7 +300,7 @@ func (rt *Runtime) EvalFile(path string) (runtime.Value, error) {
 	}
 	forms, err := parser.Parse(f)
 	if err != nil {
-		return runtime.Value{}, parseErr(err, abs)
+		return Value{}, parseErr(err, abs)
 	}
 	rt.m.Lock()
 	defer rt.m.Unlock()
@@ -311,14 +310,14 @@ func (rt *Runtime) EvalFile(path string) (runtime.Value, error) {
 }
 
 func parseErr(err error, file string) error {
-	if e, ok := errors.AsType[*runtime.Error](err); ok {
+	if e, ok := errors.AsType[*syntax.Error](err); ok {
 		return e.WithFile(file)
 	}
 	return err
 }
 
 // Apply calls fn with positional args.
-func (rt *Runtime) Apply(fn runtime.Value, args []runtime.Value) (runtime.Value, error) {
+func (rt *Runtime) Apply(fn Value, args []Value) (Value, error) {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	rt.m.BeginBudget()
@@ -326,15 +325,15 @@ func (rt *Runtime) Apply(fn runtime.Value, args []runtime.Value) (runtime.Value,
 }
 
 // Fire runs matching (on event ...) handlers. Missing payload keys are nil.
-func (rt *Runtime) Fire(event string, payload map[string]runtime.Value) error {
+func (rt *Runtime) Fire(event string, payload map[string]Value) error {
 	rt.m.Lock()
 	defer rt.m.Unlock()
 	rt.m.BeginBudget()
 	return rt.m.FireLocked(event, payload)
 }
 
-func (rt *Runtime) typeConfig(file string) types.Config {
-	return types.Config{
+func (rt *Runtime) typeConfig(file string) config {
+	return config{
 		Events:  rt.events,
 		Aliases: rt.aliases,
 		Extra:   rt.extraClauses,
@@ -343,33 +342,33 @@ func (rt *Runtime) typeConfig(file string) types.Config {
 	}
 }
 
-func (rt *Runtime) checkSrc(r io.Reader, file string) types.CheckResult {
+func (rt *Runtime) checkSrc(r io.Reader, file string) CheckResult {
 	if file != "" {
 		if slices.Contains(rt.checkLoading, file) {
-			return types.CheckResult{Diagnostics: []types.Diagnostic{{Message: "import cycle: " + file}}}
+			return CheckResult{Diagnostics: []Diagnostic{{Message: "import cycle: " + file}}}
 		}
 		rt.checkLoading = append(rt.checkLoading, file)
 		defer func() { rt.checkLoading = rt.checkLoading[:len(rt.checkLoading)-1] }()
 	}
 	parsed, err := parser.Parse(r)
 	if err != nil {
-		e := runtime.AsError(err)
+		e := syntax.AsError(err)
 		end := e.End
 		if end == 0 {
 			end = e.Start + 1
 		}
-		return types.CheckResult{Diagnostics: []types.Diagnostic{{Start: e.Start, End: end, Message: e.Message}}}
+		return CheckResult{Diagnostics: []Diagnostic{{Start: e.Start, End: end, Message: e.Message}}}
 	}
 	prog, err := rt.m.ExpandLocked(parsed)
 	if err != nil {
-		e := runtime.AsError(err)
+		e := syntax.AsError(err)
 		end := e.End
 		if end <= e.Start {
 			end = e.Start + 1
 		}
-		return types.CheckResult{Diagnostics: []types.Diagnostic{{Start: e.Start, End: end, Message: e.Message}}}
+		return CheckResult{Diagnostics: []Diagnostic{{Start: e.Start, End: end, Message: e.Message}}}
 	}
-	res := types.Check(parsed, prog, rt.typeConfig(file))
+	res := checkProgram(parsed, prog, rt.typeConfig(file))
 	if file != "" {
 		cycle := false
 		for _, d := range res.Diagnostics {
@@ -390,7 +389,7 @@ func (rt *Runtime) checkSrc(r io.Reader, file string) types.CheckResult {
 
 // Check type-checks r with a fresh runtime. print is registered so
 // scripts that use it type-check the same way as `writ check`.
-func Check(r io.Reader) types.CheckResult {
+func Check(r io.Reader) CheckResult {
 	rt := New()
 	rt.RegisterPrint()
 	return rt.Check(r)

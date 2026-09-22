@@ -6,7 +6,6 @@ import (
 	"strconv"
 	"strings"
 
-	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/scanner"
 	"deedles.dev/writ/syntax"
 )
@@ -108,7 +107,7 @@ func ParseScanner(sc *scanner.Scanner) ([]syntax.Form, error) {
 // Incomplete reports whether a [Parse] error means the input needs more
 // data (unclosed list, map, string, tick symbol, or quote).
 func Incomplete(err error) bool {
-	var e *runtime.Error
+	var e *syntax.Error
 	return errors.As(err, &e) && e.IsIncomplete()
 }
 
@@ -189,7 +188,7 @@ func (p *parser) read() (syntax.Form, error) {
 	t := p.tok()
 	if t.Kind == scanner.TokEOF {
 		start := max(p.endPos()-1, 0)
-		return syntax.Form{}, runtime.ErrorIncomplete(start, p.pos(), "unexpected end of script")
+		return syntax.Form{}, syntax.ErrorIncomplete(start, p.pos(), "unexpected end of script")
 	}
 	switch t.Kind {
 	case scanner.TokComment:
@@ -204,10 +203,10 @@ func (p *parser) read() (syntax.Form, error) {
 		return p.readDelimited(scanner.TokRBracket, ']')
 	case scanner.TokRParen:
 		p.advance()
-		return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "unexpected )")
+		return syntax.Form{}, syntax.ErrorAt(t.Start, t.End, "unexpected )")
 	case scanner.TokRBracket:
 		p.advance()
-		return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "unexpected ]")
+		return syntax.Form{}, syntax.ErrorAt(t.Start, t.End, "unexpected ]")
 	case scanner.TokQuote, scanner.TokUnquote, scanner.TokSplice:
 		p.advance()
 		if p.err != nil {
@@ -260,13 +259,13 @@ func (p *parser) read() (syntax.Form, error) {
 		if scanner.IsIntLit(word) {
 			n, ok := syntax.ParseInt(word)
 			if !ok {
-				return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "invalid number")
+				return syntax.Form{}, syntax.ErrorAt(t.Start, t.End, "invalid number")
 			}
 			return p.trail(withLex(n, t))
 		}
 		f, err := strconv.ParseFloat(word, 64)
 		if err != nil {
-			return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "invalid number")
+			return syntax.Form{}, syntax.ErrorAt(t.Start, t.End, "invalid number")
 		}
 		return p.trail(withLex(syntax.Float(f), t))
 	case scanner.TokSymbol:
@@ -276,7 +275,7 @@ func (p *parser) read() (syntax.Form, error) {
 		}
 		word := t.Text
 		if word == "" {
-			return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "empty token")
+			return syntax.Form{}, syntax.ErrorAt(t.Start, t.End, "empty token")
 		}
 		atom, err := dottedForm(word, t.Start, t.End)
 		if err != nil {
@@ -288,7 +287,7 @@ func (p *parser) read() (syntax.Form, error) {
 		return p.trail(atom)
 	default:
 		p.advance()
-		return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "empty token")
+		return syntax.Form{}, syntax.ErrorAt(t.Start, t.End, "empty token")
 	}
 }
 
@@ -309,7 +308,7 @@ func (p *parser) readDelimited(close scanner.TokenKind, closeCh byte) (syntax.Fo
 		}
 		t := p.tok()
 		if t.Kind == scanner.TokEOF {
-			return syntax.Form{}, runtime.ErrorIncomplete(open.Start, p.pos(), "missing "+string(closeCh))
+			return syntax.Form{}, syntax.ErrorIncomplete(open.Start, p.pos(), "missing "+string(closeCh))
 		}
 		if t.Kind == close {
 			p.advance()
@@ -319,7 +318,7 @@ func (p *parser) readDelimited(close scanner.TokenKind, closeCh byte) (syntax.Fo
 			break
 		}
 		if t.Kind == scanner.TokRParen || t.Kind == scanner.TokRBracket {
-			return syntax.Form{}, runtime.ErrorAt(t.Start, t.End, "unexpected "+t.Text)
+			return syntax.Form{}, syntax.ErrorAt(t.Start, t.End, "unexpected "+t.Text)
 		}
 		x, err := p.read()
 		if err != nil {
@@ -362,7 +361,7 @@ func finishBracket(xs []syntax.Form) (syntax.Form, error) {
 		if a.IsKey() {
 			keys++
 			if i+1 >= len(items) || items[i+1].IsKey() {
-				return syntax.Form{}, runtime.ErrorMsg("map key needs a value")
+				return syntax.Form{}, syntax.ErrorMsg("map key needs a value")
 			}
 			name := a.KeyName()
 			pairs = append(pairs, syntax.MapPair{Key: syntax.Symbol(name), Value: items[i+1]})
@@ -378,7 +377,7 @@ func finishBracket(xs []syntax.Form) (syntax.Form, error) {
 		return syntax.List(xs...), nil
 	}
 	if keys*2 != len(items) {
-		return syntax.Form{}, runtime.ErrorMsg("a map cannot mix keys and other items")
+		return syntax.Form{}, syntax.ErrorMsg("a map cannot mix keys and other items")
 	}
 	m := syntax.MapFrom(pairs...)
 	if len(keySpans) > 0 {
@@ -393,19 +392,19 @@ func dottedForm(word string, start, end int) (syntax.Form, error) {
 	}
 	parts := strings.Split(word, ".")
 	if parts[0] == "" {
-		return syntax.Form{}, runtime.ErrorAt(start, end, "dotted name cannot start with .")
+		return syntax.Form{}, syntax.ErrorAt(start, end, "dotted name cannot start with .")
 	}
 	if parts[len(parts)-1] == "" {
-		return syntax.Form{}, runtime.ErrorAt(start, end, "dotted name cannot end with .")
+		return syntax.Form{}, syntax.ErrorAt(start, end, "dotted name cannot end with .")
 	}
 	xs := []syntax.Form{syntax.Symbol(".")}
 	off := start
 	for i, part := range parts {
 		if part == "" {
-			return syntax.Form{}, runtime.ErrorAt(start, end, "dotted name cannot contain empty field")
+			return syntax.Form{}, syntax.ErrorAt(start, end, "dotted name cannot contain empty field")
 		}
 		if i > 0 && scanner.IsNumLit(part) {
-			return syntax.Form{}, runtime.ErrorAt(off, off+len(part), "dotted name field must be a name")
+			return syntax.Form{}, syntax.ErrorAt(off, off+len(part), "dotted name field must be a name")
 		}
 		xs = append(xs, syntax.Symbol(part).WithSpan(off, off+len(part)))
 		off += len(part) + 1
@@ -416,7 +415,7 @@ func dottedForm(word string, start, end int) (syntax.Form, error) {
 func unquoteTick(t scanner.Token) (string, error) {
 	s := t.Text
 	if len(s) < 2 || s[0] != '`' || s[len(s)-1] != '`' || !closedQuoted(s, '`') {
-		return "", runtime.ErrorIncomplete(t.Start, t.End, "unterminated symbol")
+		return "", syntax.ErrorIncomplete(t.Start, t.End, "unterminated symbol")
 	}
 	inner := s[1 : len(s)-1]
 	var out strings.Builder
@@ -429,7 +428,7 @@ func unquoteTick(t scanner.Token) (string, error) {
 		out.WriteByte(inner[i])
 	}
 	if out.Len() == 0 {
-		return "", runtime.ErrorAt(t.Start, t.End, "empty symbol")
+		return "", syntax.ErrorAt(t.Start, t.End, "empty symbol")
 	}
 	return out.String(), nil
 }
@@ -437,7 +436,7 @@ func unquoteTick(t scanner.Token) (string, error) {
 func unquoteString(t scanner.Token) (string, error) {
 	s := t.Text
 	if len(s) < 2 || s[0] != '"' || s[len(s)-1] != '"' || !closedQuoted(s, '"') {
-		return "", runtime.ErrorIncomplete(t.Start, t.End, "unterminated string")
+		return "", syntax.ErrorIncomplete(t.Start, t.End, "unterminated string")
 	}
 	inner := s[1 : len(s)-1]
 	var out strings.Builder

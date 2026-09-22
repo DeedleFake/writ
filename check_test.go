@@ -1,8 +1,7 @@
 package writ
 
 import (
-	"deedles.dev/writ/runtime"
-	"deedles.dev/writ/types"
+	"deedles.dev/writ/syntax"
 	"errors"
 	"os"
 	"path/filepath"
@@ -118,7 +117,7 @@ func TestCheckHints(t *testing.T) {
 
 func TestCheckHostEvent(t *testing.T) {
 	rt := New()
-	rt.RegisterEvent("tick", types.PayloadKey{Name: "n", Type: types.IntType()})
+	rt.RegisterEvent("tick", PayloadKey{Name: "n", Type: IntType()})
 	res := rt.Check(rd(`
 (on tick (n)
   (+ n 1))
@@ -168,9 +167,9 @@ func TestCheckHostAlias(t *testing.T) {
 	if !ok {
 		t.Fatal("alias")
 	}
-	if err := rt.RegisterBuiltin("paint", func(args []runtime.Value) (runtime.Value, error) {
-		return runtime.Nil, nil
-	}, types.PosFn(types.NilType(), ct)); err != nil {
+	if err := rt.RegisterBuiltin("paint", func(args []Value) (Value, error) {
+		return Nil, nil
+	}, PosFn(NilType(), ct)); err != nil {
 		t.Fatal(err)
 	}
 	res := rt.Check(rd(`(paint 'red)`))
@@ -294,7 +293,7 @@ func TestCheckFileImportUsesScriptDir(t *testing.T) {
 	t.Chdir(root)
 	rt := New()
 	res := rt.CheckFile(evil)
-	if rt.GetProp("leaked").Equal(runtime.Int64(1)) {
+	if rt.GetProp("leaked").Equal(Int64(1)) {
 		t.Fatalf("CheckFile imported cwd file: diags=%v", res.Diagnostics)
 	}
 	if _, err := New().EvalFile(evil); err == nil {
@@ -418,10 +417,10 @@ func TestCheckKeyedImport(t *testing.T) {
 	}
 
 	rt := New()
-	rt.RegisterPackage("io", runtime.Package{
-		Funcs: map[string]runtime.Func{
-			"write": func(args []runtime.Value) (runtime.Value, error) {
-				return runtime.Nil, nil
+	rt.RegisterPackage("io", Package{
+		Funcs: map[string]Func{
+			"write": func(args []Value) (Value, error) {
+				return Nil, nil
 			},
 		},
 	})
@@ -506,28 +505,28 @@ type nativeOther struct{ n int }
 
 func TestCheckNativeHostOpaque(t *testing.T) {
 	rt := New()
-	if err := rt.RegisterBuiltin("mk-box", func(args []runtime.Value) (runtime.Value, error) {
-		return runtime.Native(&nativeHandle{n: 7}), nil
-	}, types.PosFn(types.Native[*nativeHandle]())); err != nil {
+	if err := rt.RegisterBuiltin("mk-box", func(args []Value) (Value, error) {
+		return Native(&nativeHandle{n: 7}), nil
+	}, PosFn(NativeType[*nativeHandle]())); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.RegisterBuiltin("use-box", func(args []runtime.Value) (runtime.Value, error) {
+	if err := rt.RegisterBuiltin("use-box", func(args []Value) (Value, error) {
 		h, ok := args[0].As[*nativeHandle]()
 		if !ok || h == nil {
-			return runtime.Nil, runtime.ErrorMsg("want handle")
+			return Nil, syntax.ErrorMsg("want handle")
 		}
-		return runtime.Int64(int64(h.n)), nil
-	}, types.PosFn(types.IntType(), types.Native[*nativeHandle]())); err != nil {
+		return Int64(int64(h.n)), nil
+	}, PosFn(IntType(), NativeType[*nativeHandle]())); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.RegisterBuiltin("echo-box", func(args []runtime.Value) (runtime.Value, error) {
+	if err := rt.RegisterBuiltin("echo-box", func(args []Value) (Value, error) {
 		return args[0], nil
-	}, types.PosFn(types.Native[*nativeHandle](), types.Native[*nativeHandle]())); err != nil {
+	}, PosFn(NativeType[*nativeHandle](), NativeType[*nativeHandle]())); err != nil {
 		t.Fatal(err)
 	}
-	if err := rt.RegisterBuiltin("mk-other", func(args []runtime.Value) (runtime.Value, error) {
-		return runtime.Native(&nativeOther{n: 1}), nil
-	}, types.PosFn(types.Native[*nativeOther]())); err != nil {
+	if err := rt.RegisterBuiltin("mk-other", func(args []Value) (Value, error) {
+		return Native(&nativeOther{n: 1}), nil
+	}, PosFn(NativeType[*nativeOther]())); err != nil {
 		t.Fatal(err)
 	}
 
@@ -552,7 +551,7 @@ func TestCheckNativeHostOpaque(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !v.Equal(runtime.Int64(7)) {
+	if !v.Equal(Int64(7)) {
 		t.Fatalf("round-trip: %v", v)
 	}
 

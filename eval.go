@@ -1,15 +1,16 @@
-package runtime
+package writ
 
 import (
 	"time"
 
+	"deedles.dev/writ/parser"
 	"deedles.dev/writ/scanner"
 	"deedles.dev/writ/syntax"
 )
 
 type ctx struct {
-	rt       *Machine
-	macros   map[string][]Clause
+	rt       *machine
+	macros   map[string][]clause
 	macroEnv *env
 	file     string
 	depth    int
@@ -17,13 +18,13 @@ type ctx struct {
 
 const maxEvalDepth = 8000
 
-func newCtx(rt *Machine, env *env, macros map[string][]Clause) *ctx {
+func newCtx(rt *machine, env *env, macros map[string][]clause) *ctx {
 	file := ""
 	if rt != nil {
 		file = rt.file
 	}
 	if macros == nil {
-		macros = map[string][]Clause{}
+		macros = map[string][]clause{}
 	}
 	return &ctx{rt: rt, macros: macros, macroEnv: env, file: file}
 }
@@ -352,7 +353,7 @@ func evalQuote(v syntax.Form, env *env, c *ctx, depth int) (Value, error) {
 func special(name string, args []syntax.Form, env *env, c *ctx) (Value, bool, error) {
 	switch name {
 	case "if":
-		clauses, err := parseIfArgs(args)
+		clauses, err := parser.ParseIfArgs(args)
 		if err != nil {
 			return Value{}, true, err
 		}
@@ -536,9 +537,9 @@ func makeFn(args []syntax.Form, env *env) (Value, error) {
 	if err != nil {
 		return Value{}, err
 	}
-	clauses := make([]Clause, len(parsed.clauses))
+	clauses := make([]clause, len(parsed.clauses))
 	for i, cl := range parsed.clauses {
-		clauses[i] = Clause{Params: cl.Params, Body: cl.Body}
+		clauses[i] = clause{params: cl.params, Body: cl.Body}
 	}
 	return makeFnVal(clauses, env), nil
 }
@@ -668,7 +669,7 @@ func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
 		}
 		allPos, allKey := true, true
 		for _, cl := range f.clauses {
-			if cl.Params.Key {
+			if cl.params.Key {
 				allPos = false
 			} else {
 				allKey = false
@@ -682,7 +683,7 @@ func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
 		}
 		for _, clause := range f.clauses {
 			child := makeEnv(f.env)
-			if !tryBind(clause.Params, call, child) {
+			if !tryBind(clause.params, call, child) {
 				continue
 			}
 			last := Nil
@@ -703,7 +704,7 @@ func applyFn(fn Value, call callParts, env *env, c *ctx) (Value, error) {
 	return Value{}, errMsg("not a function")
 }
 
-func bindPat(pat Pattern, val Value, env *env) bool {
+func bindPat(pat pattern, val Value, env *env) bool {
 	if !pat.Bind {
 		return pat.Value.Equal(val)
 	}
@@ -711,7 +712,7 @@ func bindPat(pat Pattern, val Value, env *env) bool {
 	return true
 }
 
-func tryBind(params Params, call callParts, env *env) bool {
+func tryBind(params params, call callParts, env *env) bool {
 	if !params.Key {
 		if len(call.keys) > 0 {
 			return false

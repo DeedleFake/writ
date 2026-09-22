@@ -1,4 +1,4 @@
-package types
+package writ
 
 import (
 	"encoding/binary"
@@ -42,7 +42,7 @@ const (
 )
 
 // Encode serializes t for package export tables.
-func Encode(t Type) ([]byte, error) {
+func EncodeType(t Type) ([]byte, error) {
 	var e typeEnc
 	e.u8(typeCodecVersion)
 	if err := e.typ(t); err != nil {
@@ -51,17 +51,17 @@ func Encode(t Type) ([]byte, error) {
 	return e.buf, nil
 }
 
-// MustEncode is Encode panicking on error.
+// MustEncode is EncodeType panicking on error.
 func MustEncode(t Type) []byte {
-	b, err := Encode(t)
+	b, err := EncodeType(t)
 	if err != nil {
 		panic(err)
 	}
 	return b
 }
 
-// Decode reads a type produced by [Encode].
-func Decode(b []byte) (Type, error) {
+// Decode reads a type produced by [EncodeType].
+func DecodeType(b []byte) (Type, error) {
 	d := typeDec{b: b}
 	ver, err := d.u8()
 	if err != nil {

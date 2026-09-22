@@ -1,4 +1,4 @@
-package types
+package writ
 
 import (
 	"testing"
@@ -30,15 +30,15 @@ func TestTypeCodecRoundTrip(t *testing.T) {
 		OpaqueType(),
 		Opaque("wasmhello"),
 		Opaque("wasmhello", "box"),
-		Native[*struct{ n int }](),
+		NativeType[*struct{ n int }](),
 		MacroType(),
 	}
 	for _, want := range cases {
-		b, err := Encode(want)
+		b, err := EncodeType(want)
 		if err != nil {
 			t.Fatalf("encode %s: %v", PrintType(want), err)
 		}
-		got, err := Decode(b)
+		got, err := DecodeType(b)
 		if err != nil {
 			t.Fatalf("decode %s: %v", PrintType(want), err)
 		}
@@ -51,10 +51,10 @@ func TestTypeCodecRoundTrip(t *testing.T) {
 func ptrType(t Type) *Type { return &t }
 
 func TestTypeCodecBadVersion(t *testing.T) {
-	if _, err := Decode([]byte{99}); err == nil {
+	if _, err := DecodeType([]byte{99}); err == nil {
 		t.Fatal("expected version error")
 	}
-	if _, err := Decode([]byte{1}); err == nil {
+	if _, err := DecodeType([]byte{1}); err == nil {
 		t.Fatal("expected reject of codec v1")
 	}
 }

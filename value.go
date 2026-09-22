@@ -1,4 +1,4 @@
-package runtime
+package writ
 
 import (
 	"maps"
@@ -101,7 +101,7 @@ type mapData struct {
 }
 
 type fnVal struct {
-	clauses []Clause
+	clauses []clause
 	keys    []string
 	env     *env
 	native  Func
@@ -338,6 +338,9 @@ func (v Value) withCmt(cmt string) Value {
 }
 
 func (v Value) Kind() Kind { return v.k }
+
+// Type returns the static Type of this value (exact symbols, tuples, etc.).
+func (v Value) Type() Type { return kindOf(v) }
 
 // Span returns the source span, if any.
 func (v Value) Span() (Span, bool) {
@@ -589,7 +592,7 @@ func printNative(p any) string {
 		}
 		return "#<handle host>"
 	}
-	if reflect.TypeOf(p).String() == "*runtime.guestRef" {
+	if reflect.TypeOf(p).String() == "*writ.guestRef" {
 		return "#<handle guest>"
 	}
 	return "#<native " + reflect.TypeOf(p).String() + ">"
