@@ -249,7 +249,7 @@ func (m *Machine) EvalLocked(forms []syntax.Form) (Value, error) {
 	file := m.file
 	prog, err := compileForms(forms, m, true)
 	if err != nil {
-		return Value{}, asError(err).withFile(file)
+		return Value{}, asError(err).WithFile(file)
 	}
 	env := m.env
 	if env == nil {
@@ -266,12 +266,12 @@ func (m *Machine) EvalLocked(forms []syntax.Form) (Value, error) {
 	}
 	c := newCtx(m, env, m.macros)
 	if err := evalNamedImports(prog.Imports, env, c); err != nil {
-		return Value{}, asError(err).withFile(file)
+		return Value{}, asError(err).WithFile(file)
 	}
 	v, err := evalForms(prog.Boot, env, c)
 	m.handlers = append(m.handlers, prog.Handlers...)
 	if err != nil {
-		return v, asError(err).withFile(file)
+		return v, asError(err).WithFile(file)
 	}
 	return v, nil
 }
@@ -280,7 +280,7 @@ func (m *Machine) EvalLocked(forms []syntax.Form) (Value, error) {
 func (m *Machine) EvalModule(path string, forms []syntax.Form) (Value, error) {
 	prog, err := compileForms(forms, m, false)
 	if err != nil {
-		return Value{}, asError(err).withFile(path)
+		return Value{}, asError(err).WithFile(path)
 	}
 	env := makeEnv(nil)
 	installFns(prog.Fns, env)
@@ -288,10 +288,10 @@ func (m *Machine) EvalModule(path string, forms []syntax.Form) (Value, error) {
 	c := newCtx(m, env, macros)
 	c.file = path
 	if err := evalNamedImports(prog.Imports, env, c); err != nil {
-		return Value{}, asError(err).withFile(path)
+		return Value{}, asError(err).WithFile(path)
 	}
 	if _, err := evalForms(prog.Boot, env, c); err != nil {
-		return Value{}, asError(err).withFile(path)
+		return Value{}, asError(err).WithFile(path)
 	}
 	names := map[string]Value{}
 	for _, f := range prog.Fns {

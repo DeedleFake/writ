@@ -135,13 +135,13 @@ func formSpan(f syntax.Form) (start, end int, ok bool) {
 	return sp.Start, sp.End, true
 }
 
-func errForm(v syntax.Form, msg string) *Error {
+func errForm(v syntax.Form, msg string) *syntax.Error {
 	if start, end, ok := formSpan(v); ok {
 		return errAt(start, end, msg)
 	}
 	return errMsg(msg)
 }
 
-func errFormf(v syntax.Form, format string, args ...any) *Error {
+func errFormf(v syntax.Form, format string, args ...any) *syntax.Error {
 	return errForm(v, errf(format, args...).Message)
 }

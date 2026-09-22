@@ -2,6 +2,7 @@ package writ
 
 import (
 	"bytes"
+	"deedles.dev/writ/syntax"
 	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/types"
 	"os"
@@ -67,7 +68,7 @@ func TestRegisterPackage(t *testing.T) {
 		Funcs: map[string]runtime.Func{
 			"double": func(args []runtime.Value) (runtime.Value, error) {
 				if len(args) != 1 || !args[0].IsInt() {
-					return runtime.Nil, runtime.ErrorMsg("double needs an int")
+					return runtime.Nil, syntax.ErrorMsg("double needs an int")
 				}
 				return runtime.Int64(args[0].BigInt().Int64() * 2), nil
 			},
@@ -434,7 +435,7 @@ func TestHostBuiltinCanGetProp(t *testing.T) {
 			return
 		}
 		if !v.Equal(runtime.Int64(3)) {
-			done <- runtime.ErrorMsg("want 3")
+			done <- syntax.ErrorMsg("want 3")
 			return
 		}
 		done <- nil

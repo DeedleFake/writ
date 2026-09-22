@@ -352,7 +352,7 @@ func evalQuote(v syntax.Form, env *env, c *ctx, depth int) (Value, error) {
 func special(name string, args []syntax.Form, env *env, c *ctx) (Value, bool, error) {
 	switch name {
 	case "if":
-		clauses, err := parseIfArgs(args)
+		clauses, err := ParseIfArgs(args)
 		if err != nil {
 			return Value{}, true, err
 		}

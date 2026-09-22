@@ -9,6 +9,7 @@ import (
 
 	"deedles.dev/writ/parser"
 	"deedles.dev/writ/runtime"
+	"deedles.dev/writ/syntax"
 	"deedles.dev/writ/types"
 )
 
@@ -24,7 +25,7 @@ func (rt *Runtime) loadImport(spec, fromFile string) (runtime.Value, error) {
 		return runtime.PackageValue(rt.pkgs[path]), nil
 	}
 	if rt.m.LoadingCycle(path) {
-		return runtime.Value{}, runtime.Errorf("import cycle: %s", strings.Join(append(rt.m.LoadingPath(), path), " -> "))
+		return runtime.Value{}, syntax.Errorf("import cycle: %s", strings.Join(append(rt.m.LoadingPath(), path), " -> "))
 	}
 	if exp, ok := rt.m.Loaded(path); ok {
 		return exp, nil
@@ -100,11 +101,11 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 	}
 	ext := strings.ToLower(filepath.Ext(spec))
 	if ext == "" {
-		return "", "", runtime.Errorf("import %q needs a .writ or .wasm suffix", spec)
+		return "", "", syntax.Errorf("import %q needs a .writ or .wasm suffix", spec)
 	}
 	absSpec := filepath.IsAbs(spec)
 	if absSpec && !rt.allowAbsolute {
-		return "", "", runtime.ErrorMsg("absolute import paths are disabled")
+		return "", "", syntax.ErrorMsg("absolute import paths are disabled")
 	}
 	var candidates []string
 	if fromFile != "" && !absSpec {
@@ -153,7 +154,7 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 			return p, k, nil
 		}
 	}
-	return "", "", runtime.Errorf("cannot find import %q", spec)
+	return "", "", syntax.Errorf("cannot find import %q", spec)
 }
 
 func packageType(p runtime.Package) types.Type {
@@ -223,7 +224,7 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 		return packageType(rt.pkgs[path]), nil, nil
 	}
 	if slices.Contains(rt.checkLoading, path) {
-		return types.Type{}, nil, runtime.Errorf("import cycle: %s", spec)
+		return types.Type{}, nil, syntax.Errorf("import cycle: %s", spec)
 	}
 	if rt.exportCache != nil {
 		if e, ok := rt.exportCache[path]; ok {
@@ -254,7 +255,7 @@ func (rt *Runtime) importType(spec, fromFile string) (types.Type, []types.Diagno
 	diags := prefixImportDiags(path, res.Diagnostics)
 	for _, d := range res.Diagnostics {
 		if strings.Contains(d.Message, "cycle") {
-			return types.Type{}, diags, runtime.ErrorMsg(path + ": " + d.Message)
+			return types.Type{}, diags, syntax.ErrorMsg(path + ": " + d.Message)
 		}
 	}
 	if e, ok := rt.exportCache[path]; ok {

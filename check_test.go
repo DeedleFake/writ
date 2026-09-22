@@ -1,6 +1,7 @@
 package writ
 
 import (
+	"deedles.dev/writ/syntax"
 	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/types"
 	"errors"
@@ -514,7 +515,7 @@ func TestCheckNativeHostOpaque(t *testing.T) {
 	if err := rt.RegisterBuiltin("use-box", func(args []runtime.Value) (runtime.Value, error) {
 		h, ok := args[0].As[*nativeHandle]()
 		if !ok || h == nil {
-			return runtime.Nil, runtime.ErrorMsg("want handle")
+			return runtime.Nil, syntax.ErrorMsg("want handle")
 		}
 		return runtime.Int64(int64(h.n)), nil
 	}, types.PosFn(types.IntType(), types.Native[*nativeHandle]())); err != nil {

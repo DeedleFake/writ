@@ -11,6 +11,7 @@ import (
 	"deedles.dev/writ/parser"
 	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/scanner"
+	"deedles.dev/writ/syntax"
 	"deedles.dev/writ/types"
 )
 
@@ -110,10 +111,10 @@ func (rt *Runtime) RegisterBuiltin(name string, call runtime.Func, clauses ...ty
 
 func (rt *Runtime) registerBuiltin(name string, call runtime.Func, clauses ...types.FnClause) error {
 	if scanner.IsKeyword(name) {
-		return runtime.Errorf("cannot redefine %s", name)
+		return syntax.Errorf("cannot redefine %s", name)
 	}
 	if scanner.IsCoreBuiltin(name) {
-		return runtime.Errorf("cannot redefine %s", name)
+		return syntax.Errorf("cannot redefine %s", name)
 	}
 	rt.m.RegisterExtra(name, call)
 	if rt.extraClauses == nil {
@@ -311,7 +312,7 @@ func (rt *Runtime) EvalFile(path string) (runtime.Value, error) {
 }
 
 func parseErr(err error, file string) error {
-	if e, ok := errors.AsType[*runtime.Error](err); ok {
+	if e, ok := errors.AsType[*syntax.Error](err); ok {
 		return e.WithFile(file)
 	}
 	return err
@@ -353,7 +354,7 @@ func (rt *Runtime) checkSrc(r io.Reader, file string) types.CheckResult {
 	}
 	parsed, err := parser.Parse(r)
 	if err != nil {
-		e := runtime.AsError(err)
+		e := syntax.AsError(err)
 		end := e.End
 		if end == 0 {
 			end = e.Start + 1
@@ -362,7 +363,7 @@ func (rt *Runtime) checkSrc(r io.Reader, file string) types.CheckResult {
 	}
 	prog, err := rt.m.ExpandLocked(parsed)
 	if err != nil {
-		e := runtime.AsError(err)
+		e := syntax.AsError(err)
 		end := e.End
 		if end <= e.Start {
 			end = e.Start + 1

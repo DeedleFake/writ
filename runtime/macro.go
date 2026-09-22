@@ -661,7 +661,7 @@ func expandFn(v syntax.Form, env *env, c *ctx) (syntax.Form, error) {
 }
 
 func expandIf(v syntax.Form, env *env, c *ctx) (syntax.Form, error) {
-	clauses, err := parseIfArgs(v.Items()[1:])
+	clauses, err := ParseIfArgs(v.Items()[1:])
 	if err != nil {
 		return expandElems(v, env, c)
 	}

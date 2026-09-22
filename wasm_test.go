@@ -133,7 +133,7 @@ func TestRegisterPackageMacro(t *testing.T) {
 		Macros: map[string]runtime.Macro{
 			"unless": func(args []syntax.Form) (syntax.Form, error) {
 				if len(args) < 2 {
-					return syntax.Form{}, runtime.ErrorMsg("unless needs 2 args")
+					return syntax.Form{}, syntax.ErrorMsg("unless needs 2 args")
 				}
 				form := syntax.CallList(
 					syntax.Symbol("if"),

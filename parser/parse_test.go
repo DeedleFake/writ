@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	"deedles.dev/writ/runtime"
 	"deedles.dev/writ/scanner"
 	"deedles.dev/writ/syntax"
 )
@@ -222,10 +221,10 @@ func TestIncomplete(t *testing.T) {
 	if Incomplete(nil) {
 		t.Fatal("nil")
 	}
-	if !Incomplete(runtime.ErrorIncomplete(0, 1, "xyz")) {
+	if !Incomplete(syntax.ErrorIncomplete(0, 1, "xyz")) {
 		t.Fatal("flag")
 	}
-	if Incomplete(runtime.ErrorAt(0, 1, "missing )")) {
+	if Incomplete(syntax.ErrorAt(0, 1, "missing )")) {
 		t.Fatal("message text is not enough")
 	}
 	for _, src := range []string{"(", "[", `"abc`, "`abc", "'", ",", "@", "(+ 1", "[k:", `'(`} {

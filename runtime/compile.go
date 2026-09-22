@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	"deedles.dev/writ/parser"
 	"deedles.dev/writ/scanner"
 	"deedles.dev/writ/syntax"
 )
@@ -954,30 +955,6 @@ func maxSlot(args []syntax.Form) (int, error) {
 	return max, nil
 }
 
-func hasNestedFn(args []syntax.Form) bool {
-	var walk func(syntax.Form) bool
-	walk = func(v syntax.Form) bool {
-		switch v.Kind() {
-		case syntax.KindQuote, syntax.KindUnquote, syntax.KindSplice:
-			return walk(v.Inner())
-		case syntax.KindList:
-			if isFnCall(v) {
-				return true
-			}
-			return slices.ContainsFunc(v.Items(), walk)
-		case syntax.KindMap:
-			vals := make([]syntax.Form, len(v.Pairs()))
-			for i, pair := range v.Pairs() {
-				vals[i] = pair.Value
-			}
-			return slices.ContainsFunc(vals, walk)
-		default:
-			return false
-		}
-	}
-	return slices.ContainsFunc(args, walk)
-}
-
 func slotParams(n int) Params {
 	pats := make([]Pattern, n)
 	for i := 1; i <= n; i++ {
@@ -986,69 +963,48 @@ func slotParams(n int) Params {
 	return Params{Pats: pats}
 }
 
-func shortFnBody(args []syntax.Form) []syntax.Form {
-	xs := syntax.FilterComments(args)
-	if len(xs) <= 1 {
-		return xs
-	}
-	return []syntax.Form{syntax.CallList(xs...)}
-}
-
 type fnParsed struct {
 	kind    string
 	clauses []Clause
 }
 
 func parseFn(args []syntax.Form) (fnParsed, error) {
-	n, err := maxSlot(args)
+	kind, shapes, err := parser.ParseFn(args)
 	if err != nil {
 		return fnParsed{}, err
 	}
-	if n > 0 {
-		if hasNestedFn(args) {
-			return fnParsed{}, errMsg("a short fn cannot contain another fn")
-		}
-		return fnParsed{
-			kind:    "short",
-			clauses: []Clause{{Params: slotParams(n), Body: shortFnBody(args)}},
-		}, nil
-	}
-	if len(args) == 0 {
-		return fnParsed{}, errMsg("(fn (args...) body)")
-	}
-	var clauses []Clause
-	i := 0
-	for i < len(args) {
-		paramsForm := args[i]
-		if paramsForm.Kind() != syntax.KindList {
-			return fnParsed{}, errMsg("(fn (args...) body)")
-		}
-		params, err := parseParams(paramsForm, "fn")
+	if kind == "short" {
+		n, err := maxSlot(args)
 		if err != nil {
 			return fnParsed{}, err
 		}
-		i++
-		var body []syntax.Form
-		for i < len(args) && !isFnSep(args[i]) {
-			body = append(body, args[i])
-			i++
+		body := []syntax.Form{}
+		if len(shapes) > 0 {
+			body = shapes[0].Body
+		}
+		return fnParsed{
+			kind:    "short",
+			clauses: []Clause{{Params: slotParams(n), Body: body}},
+		}, nil
+	}
+	var clauses []Clause
+	for _, sh := range shapes {
+		if sh.ParamsForm == nil {
+			return fnParsed{}, errMsg("(fn (args...) body)")
+		}
+		params, err := parseParams(*sh.ParamsForm, "fn")
+		if err != nil {
+			return fnParsed{}, err
 		}
 		if unreachableBy(clauses, params) {
 			return fnParsed{}, errMsg("unreachable clause")
 		}
-		pf := paramsForm
-		clauses = append(clauses, Clause{Params: params, Body: body, ParamsForm: &pf})
-		if i < len(args) && isFnSep(args[i]) {
-			i++
-			if i >= len(args) {
-				return fnParsed{}, errMsg("fn after fn needs a parameter list")
-			}
-		}
+		clauses = append(clauses, Clause{Params: params, Body: sh.Body, ParamsForm: sh.ParamsForm})
 	}
-	return fnParsed{kind: "long", clauses: clauses}, nil
+	return fnParsed{kind: kind, clauses: clauses}, nil
 }
 
-// ParseFn parses (fn ...) arguments.
+// ParseFn parses (fn ...) arguments and binds parameter values.
 func ParseFn(args []syntax.Form) (kind string, clauses []Clause, err error) {
 	parsed, err := parseFn(args)
 	if err != nil {
@@ -1057,72 +1013,12 @@ func ParseFn(args []syntax.Form) (kind string, clauses []Clause, err error) {
 	return parsed.kind, parsed.clauses, nil
 }
 
-// IfClause is one branch of (if ...).
-type IfClause struct {
-	Test *syntax.Form
-	Not  bool
-	Body []syntax.Form
-}
-
-func isElseSym(v syntax.Form) bool { return syntax.IsName(v, "else") }
-func isIfSym(v syntax.Form) bool   { return syntax.IsName(v, "if") }
-func isNotSym(v syntax.Form) bool  { return syntax.IsName(v, "not") }
-
-func readIfTest(args []syntax.Form, i int, ctx string) (test syntax.Form, not bool, next int, err error) {
-	if i >= len(args) {
-		return syntax.Form{}, false, 0, errf("%s needs a test", ctx)
-	}
-	if isNotSym(args[i]) {
-		i++
-		if i >= len(args) {
-			return syntax.Form{}, false, 0, errf("%s not needs a test", ctx)
-		}
-		return args[i], true, i + 1, nil
-	}
-	return args[i], false, i + 1, nil
-}
-
-func parseIfArgs(args []syntax.Form) ([]IfClause, error) {
-	if len(args) == 0 {
-		return nil, errMsg("(if test ...)")
-	}
-	var clauses []IfClause
-	test, not, i, err := readIfTest(args, 0, "if")
-	if err != nil {
-		return nil, err
-	}
-	curTest, curNot := test, not
-	var body []syntax.Form
-	for i < len(args) {
-		a := args[i]
-		if isElseSym(a) {
-			t := curTest
-			clauses = append(clauses, IfClause{Test: &t, Not: curNot, Body: body})
-			i++
-			if i < len(args) && isIfSym(args[i]) {
-				i++
-				test, not, ni, err := readIfTest(args, i, "else if")
-				if err != nil {
-					return nil, err
-				}
-				curTest, curNot, i = test, not, ni
-				body = nil
-				continue
-			}
-			clauses = append(clauses, IfClause{Body: args[i:]})
-			return clauses, nil
-		}
-		body = append(body, a)
-		i++
-	}
-	t := curTest
-	clauses = append(clauses, IfClause{Test: &t, Not: curNot, Body: body})
-	return clauses, nil
-}
+// IfClause is one branch of (if ...); alias of parser.IfClause.
+type IfClause = parser.IfClause
 
 // ParseIfArgs parses (if ...) arguments.
 func ParseIfArgs(args []syntax.Form) ([]IfClause, error) {
-	return parseIfArgs(args)
+	return parser.ParseIfArgs(args)
 }
 
 func containsStr(xs []string, s string) bool {

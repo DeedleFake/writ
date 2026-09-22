@@ -45,11 +45,11 @@ func echoVal(args []runtime.Value) (runtime.Value, error) {
 
 func incBox(args []runtime.Value) (runtime.Value, error) {
 	if len(args) < 1 {
-		return runtime.Nil, runtime.ErrorMsg("want box")
+		return runtime.Nil, syntax.ErrorMsg("want box")
 	}
 	b, ok := args[0].As[*box]()
 	if !ok || b == nil {
-		return runtime.Nil, runtime.ErrorMsg("want box")
+		return runtime.Nil, syntax.ErrorMsg("want box")
 	}
 	b.n++
 	return args[0], nil
@@ -57,11 +57,11 @@ func incBox(args []runtime.Value) (runtime.Value, error) {
 
 func getBox(args []runtime.Value) (runtime.Value, error) {
 	if len(args) < 1 {
-		return runtime.Nil, runtime.ErrorMsg("want box")
+		return runtime.Nil, syntax.ErrorMsg("want box")
 	}
 	b, ok := args[0].As[*box]()
 	if !ok || b == nil {
-		return runtime.Nil, runtime.ErrorMsg("want box")
+		return runtime.Nil, syntax.ErrorMsg("want box")
 	}
 	return runtime.Int64(b.n), nil
 }
@@ -76,7 +76,7 @@ func greet(args []runtime.Value) (runtime.Value, error) {
 
 func unless(args []syntax.Form) (syntax.Form, error) {
 	if len(args) < 2 {
-		return syntax.Form{}, runtime.ErrorMsg("unless needs a test and a body")
+		return syntax.Form{}, syntax.ErrorMsg("unless needs a test and a body")
 	}
 	form := syntax.CallList(
 		syntax.Symbol("if"),
