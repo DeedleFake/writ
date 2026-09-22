@@ -887,8 +887,6 @@ func unreachableBy(prev []clause, next params) bool {
 	return false
 }
 
-func isFnSep(v syntax.Form) bool { return syntax.IsName(v, "fn") }
-
 func isFnCall(v syntax.Form) bool {
 	if v.Kind() != syntax.KindList || v.IsVec() {
 		return false
