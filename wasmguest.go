@@ -28,19 +28,27 @@ func guestForeignHandle(id uint64) Value {
 }
 
 func dispatchGuestFunc(name string, args []Value) (Value, error) {
-	f, ok := guestPkg.Funcs[name]
-	if !ok || f == nil {
+	v, ok := guestPkg.Exports[name]
+	if !ok || v.k != KindFn {
 		return Value{}, errf("unknown func %s", name)
 	}
-	return f(args)
+	f := v.fnData()
+	if f == nil || f.native == nil {
+		return Value{}, errf("unknown func %s", name)
+	}
+	return f.native(args)
 }
 
 func dispatchGuestMacro(name string, args []syntax.Form) (syntax.Form, error) {
-	f, ok := guestPkg.Macros[name]
-	if !ok || f == nil {
+	v, ok := guestPkg.Exports[name]
+	if !ok || v.k != KindMacro {
 		return syntax.Form{}, errf("unknown macro %s", name)
 	}
-	return f(args)
+	f := v.fnData()
+	if f == nil || f.macro == nil {
+		return syntax.Form{}, errf("unknown macro %s", name)
+	}
+	return f.macro(args)
 }
 
 //go:wasmexport writ_abi

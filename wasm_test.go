@@ -129,8 +129,8 @@ func TestWasmCheckLoadError(t *testing.T) {
 func TestRegisterPackageMacro(t *testing.T) {
 	rt := New()
 	rt.RegisterPackage("mac", Package{
-		Macros: map[string]Macro{
-			"unless": func(args []syntax.Form) (syntax.Form, error) {
+		Exports: map[string]Value{
+			"unless": Mac(func(args []syntax.Form) (syntax.Form, error) {
 				if len(args) < 2 {
 					return syntax.Form{}, syntax.ErrorMsg("unless needs 2 args")
 				}
@@ -140,7 +140,7 @@ func TestRegisterPackageMacro(t *testing.T) {
 					args[1],
 				)
 				return syntax.CallList(form), nil
-			},
+			}),
 		},
 	})
 	v, err := rt.Eval(rd(`
@@ -198,17 +198,14 @@ func TestWasmImportTypes(t *testing.T) {
 
 func TestRegisterPackageTypes(t *testing.T) {
 	rt := New()
-	rt.RegisterPackage("mathx", WithPackageTypes(Package{
-		Funcs: map[string]Func{
-			"double": func(args []Value) (Value, error) {
+	rt.RegisterPackage("mathx", Package{
+		Exports: map[string]Value{
+			"double": TypedFn(func(args []Value) (Value, error) {
 				return Int64(args[0].BigInt().Int64() * 2), nil
-			},
+			}, FnType(PosFn(IntType(), IntType()))),
+			"two": Typed(Int64(2), IntType()),
 		},
-		Vals: map[string]Value{"two": Int64(2)},
-	}, map[string]Type{
-		"double": FnType(PosFn(IntType(), IntType())),
-		"two":    IntType(),
-	}))
+	})
 	res := rt.Check(rd(`(import m: "mathx") (+ (m.double 21) m.two)`))
 	if len(res.Diagnostics) != 0 {
 		t.Fatalf("typed package: %v", res.Diagnostics)

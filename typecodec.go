@@ -7,7 +7,7 @@ import (
 )
 
 // Wire format for package export types (WASM package table /
-// Package.Types). Versioned; unknown versions fail closed.
+// Value.DeclaredType). Versioned; unknown versions fail closed.
 //
 // Version 2: Writ-shaped types — no exact strings / unknown_string,
 // opaque package+name (not reflect native IDs), macro atom, no rest
@@ -52,8 +52,7 @@ func EncodeType(t Type) ([]byte, error) {
 }
 
 // EncodePackageTypes encodes each type for tests and tooling.
-// EncodePackageTable encodes from Package.Types directly; authors use
-// WithPackageTypes rather than pre-encoding blobs.
+// EncodePackageTable reads DeclaredType on each export Value.
 func EncodePackageTypes(m map[string]Type) (map[string][]byte, error) {
 	if len(m) == 0 {
 		return nil, nil

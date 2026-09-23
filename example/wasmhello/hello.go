@@ -13,32 +13,24 @@ import (
 func main() {}
 
 func init() {
-	writ.ExportGuestPackage(writ.WithPackageTypes(writ.Package{
-		Funcs: map[string]writ.Func{
-			"greet": greet,
-			"mk":    mkBox,
-			"inc":   incBox,
-			"get":   getBox,
-			"echo":  echoVal,
+	writ.ExportGuestPackage(writ.Package{
+		Exports: map[string]writ.Value{
+			"greet": writ.TypedFn(greet, writ.FnType(
+				writ.PosFn(writ.StringType()),
+				writ.PosFn(writ.StringType(), writ.StringType()),
+			)),
+			"mk": writ.TypedFn(mkBox, writ.FnType(writ.PosFn(writ.Opaque("wasmhello", "box")))),
+			"inc": writ.TypedFn(incBox, writ.FnType(writ.PosFn(
+				writ.Opaque("wasmhello", "box"), writ.Opaque("wasmhello", "box"),
+			))),
+			"get": writ.TypedFn(getBox, writ.FnType(writ.PosFn(
+				writ.IntType(), writ.Opaque("wasmhello", "box"),
+			))),
+			"echo":    writ.TypedFn(echoVal, writ.FnType(writ.PosFn(writ.Any(), writ.Any()))),
+			"unless":  writ.Mac(unless),
+			"version": writ.Typed(writ.Int64(1), writ.IntType()),
 		},
-		Macros: map[string]writ.Macro{
-			"unless": unless,
-		},
-		Vals: map[string]writ.Value{
-			"version": writ.Int64(1),
-		},
-	}, map[string]writ.Type{
-		"greet": writ.FnType(
-			writ.PosFn(writ.StringType()),
-			writ.PosFn(writ.StringType(), writ.StringType()),
-		),
-		"mk":      writ.FnType(writ.PosFn(writ.Opaque("wasmhello", "box"))),
-		"inc":     writ.FnType(writ.PosFn(writ.Opaque("wasmhello", "box"), writ.Opaque("wasmhello", "box"))),
-		"get":     writ.FnType(writ.PosFn(writ.IntType(), writ.Opaque("wasmhello", "box"))),
-		"echo":    writ.FnType(writ.PosFn(writ.Any(), writ.Any())),
-		"unless":  writ.MacroType(),
-		"version": writ.IntType(),
-	}))
+	})
 }
 
 type box struct{ n int64 }

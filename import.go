@@ -155,43 +155,30 @@ func (rt *Runtime) resolveImport(spec, fromFile string) (path, kind string, err 
 }
 
 func packageType(p Package) Type {
-	keys := make([]string, 0, len(p.Funcs)+len(p.Vals)+len(p.Macros))
-	seen := map[string]struct{}{}
-	for k := range p.Funcs {
+	keys := make([]string, 0, len(p.Exports))
+	for k := range p.Exports {
 		keys = append(keys, k)
-		seen[k] = struct{}{}
-	}
-	for k := range p.Macros {
-		if _, ok := seen[k]; !ok {
-			keys = append(keys, k)
-			seen[k] = struct{}{}
-		}
-	}
-	for k := range p.Vals {
-		if _, ok := seen[k]; !ok {
-			keys = append(keys, k)
-		}
 	}
 	sort.Strings(keys)
 	fields := make([]FnKey, 0, len(keys))
 	for _, k := range keys {
-		t := exportType(p, k)
-		fields = append(fields, FnKey{Name: k, Type: t})
+		fields = append(fields, FnKey{Name: k, Type: exportType(p.Exports[k])})
 	}
 	return MapType(fields, nil)
 }
 
-func exportType(p Package, name string) Type {
-	if t, ok := p.Types[name]; ok {
+func exportType(v Value) Type {
+	if t, ok := v.DeclaredType(); ok {
 		return t
 	}
-	if _, ok := p.Funcs[name]; ok {
+	switch v.k {
+	case KindFn:
 		return Dynamic(Any())
-	}
-	if _, ok := p.Macros[name]; ok {
+	case KindMacro:
 		return MacroType()
+	default:
+		return Any()
 	}
-	return Any()
 }
 
 func (rt *Runtime) importType(spec, fromFile string) (Type, []Diagnostic, error) {

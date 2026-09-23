@@ -71,12 +71,13 @@ type MapPair struct {
 
 // Value is a Writ runtime value.
 type Value struct {
-	k   Kind
-	n   int64 // small int, or float64 bits
-	s   string
-	h   unique.Handle[string]
-	p   any      // list, map, fn, *big.Int, native, syntax.Form
-	src *srcInfo // nil for synthetic values
+	k     Kind
+	n     int64 // small int, or float64 bits
+	s     string
+	h     unique.Handle[string]
+	p     any      // list, map, fn, *big.Int, native, syntax.Form
+	src   *srcInfo // nil for synthetic values
+	typ *Type // non-nil ⇒ declared export type (even if *typ is zero/empty FnType)
 }
 
 type srcInfo struct {
@@ -341,6 +342,15 @@ func (v Value) Kind() Kind { return v.k }
 
 // Type returns the static Type of this value (exact symbols, tuples, etc.).
 func (v Value) Type() Type { return kindOf(v) }
+
+// DeclaredType returns the type attached at construction (TypedFn/Typed/…), if any.
+// It is separate from Type()/kindOf: declared export types do not change KindFn sites.
+func (v Value) DeclaredType() (Type, bool) {
+	if v.typ == nil {
+		return Type{}, false
+	}
+	return *v.typ, true
+}
 
 // Span returns the source span, if any.
 func (v Value) Span() (Span, bool) {

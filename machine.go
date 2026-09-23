@@ -16,16 +16,11 @@ type Func func(args []Value) (Value, error)
 // one form, or a list of forms to splice at the call site.
 type Macro func(args []syntax.Form) (syntax.Form, error)
 
-// Package is funcs, macros, and values for (import).
-// Types, when set, holds type descriptors keyed by export name. The host
-// checker uses them instead of the defaults (funcs as (dynamic any), macros
-// as macro, values as any). Authors normally set Types via WithPackageTypes
-// / ExportGuestPackage(WithPackageTypes(...)).
+// Package is a set of named exports for (import).
+// Each export is a Value: use Fn/TypedFn, Mac/TypedMac, or Typed (for vals).
+// Declared types live on the Values (DeclaredType), not a separate Types map.
 type Package struct {
-	Funcs  map[string]Func
-	Macros map[string]Macro
-	Vals   map[string]Value
-	Types  map[string]Type
+	Exports map[string]Value
 }
 
 // Scheduler runs (after seconds ...) bodies. delay is in real time.
@@ -491,15 +486,16 @@ func evalNamedImports(imps []namedImport, env *env, c *ctx) error {
 // PackageValue builds the map returned by (import) of a native package.
 func PackageValue(p Package) Value {
 	names := map[string]Value{}
-	for name, f := range p.Funcs {
-		fn := f
-		names[name] = Value{k: KindFn, p: &fnVal{native: fn, name: name}}
+	for name, v := range p.Exports {
+		if v.k == KindFn || v.k == KindMacro {
+			if f := v.fnData(); f != nil {
+				cp := *f
+				cp.name = name
+				v.p = &cp
+			}
+		}
+		names[name] = v
 	}
-	for name, f := range p.Macros {
-		fn := f
-		names[name] = Value{k: KindMacro, p: &fnVal{macro: fn, name: name}}
-	}
-	maps.Copy(names, p.Vals)
 	return mapFromNames(names)
 }
 

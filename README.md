@@ -103,11 +103,11 @@ import (
 
 rt := writ.New()
 rt.RegisterPrint()
-rt.RegisterPackage("mathx", runtime.Package{
-    Funcs: map[string]runtime.Func{
-        "double": func(args []runtime.Value) (runtime.Value, error) {
-            return runtime.Int64(args[0].BigInt().Int64() * 2), nil
-        },
+rt.RegisterPackage("mathx", writ.Package{
+    Exports: map[string]writ.Value{
+        "double": writ.Fn(func(args []writ.Value) (writ.Value, error) {
+            return writ.Int64(args[0].BigInt().Int64() * 2), nil
+        }),
     },
 })
 rt.RegisterEvent("tick", types.PayloadKey{Name: "n", Type: types.IntType()})
@@ -121,7 +121,7 @@ res := rt.Check(strings.NewReader(src)) // diagnostics and type hints
 
 A WASM package is a WASI reactor (`GOOS=wasip1 GOARCH=wasm go build -buildmode=c-shared`) that exports `writ_abi`, `writ_alloc`, `writ_package`, and `writ_call`. See `example/wasmhello`.
 
-Optional export types: use `writ.WithPackageTypes` (compose with `ExportGuestPackage`) with a `map[string]Type`. Types live on `Package.Types`. Typed package-table entries carry encoded descriptors so `writ check` / inference use them instead of `any` / `(dynamic any)` / `macro`. Untyped exports keep the old defaults.
+Export types live on each `Value` via `TypedFn` / `TypedMac` / `Typed` (see `DeclaredType`). `Package` is a single `Exports map[string]Value`. Typed package-table entries carry encoded descriptors so `writ check` / inference use them instead of `any` / `(dynamic any)` / `macro`. Untyped exports keep the old defaults.
 
 Opaque `Native` values created inside a WASM package round-trip through the host as handles: the guest keeps the Go object; the host sees `KindNative` it cannot `As` into a guest type. Passing the handle into another WASM package is allowed (pass-through); only the owning package can `As` / mutate it.
 
