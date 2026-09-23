@@ -141,11 +141,17 @@ func TestWcodecDrop(t *testing.T) {
 }
 
 func TestWcodecPackageTable(t *testing.T) {
+	greetT := FnType(PosFn(StringType(), StringType()))
+	versionT := IntType()
 	p := Package{
 		Funcs: map[string]Func{"greet": func(args []Value) (Value, error) { return Nil, nil }},
 		Vals:  map[string]Value{"version": Int64(1)},
 		Macros: map[string]Macro{
 			"unless": func(args []syntax.Form) (syntax.Form, error) { return syntax.Nil, nil },
+		},
+		Types: map[string]Type{
+			"greet":   greetT,
+			"version": versionT,
 		},
 	}
 	b, err := EncodePackageTable(p, nil)
@@ -165,6 +171,23 @@ func TestWcodecPackageTable(t *testing.T) {
 	v, ok := got.Vals["version"]
 	if !ok || !v.Equal(Int64(1)) {
 		t.Fatalf("vals %v", got.Vals)
+	}
+	gotGreet, ok1 := got.Types["greet"]
+	gotVersion, ok2 := got.Types["version"]
+	if !ok1 || !ok2 || !sameType(gotGreet, greetT) || !sameType(gotVersion, versionT) {
+		t.Fatalf("types %v", got.Types)
+	}
+	p2 := Package{Funcs: map[string]Func{"f": nil}}
+	b2, err := EncodePackageTable(p2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := DecodePackageTable(bytes.NewReader(b2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := got2.Funcs["f"]; !ok || got2.Types != nil {
+		t.Fatalf("untyped %#v", got2)
 	}
 }
 

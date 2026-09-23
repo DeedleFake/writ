@@ -16,12 +16,16 @@ type Func func(args []Value) (Value, error)
 // one form, or a list of forms to splice at the call site.
 type Macro func(args []syntax.Form) (syntax.Form, error)
 
-// Package is funcs, macros, and values for (import). The checker types funcs
-// as fn(...) -> dynamic(any()) and values as any().
+// Package is funcs, macros, and values for (import).
+// Types, when set, holds type descriptors keyed by export name. The host
+// checker uses them instead of the defaults (funcs as (dynamic any), macros
+// as macro, values as any). Authors normally set Types via WithPackageTypes
+// / ExportGuestPackage(WithPackageTypes(...)).
 type Package struct {
 	Funcs  map[string]Func
 	Macros map[string]Macro
 	Vals   map[string]Value
+	Types  map[string]Type
 }
 
 // Scheduler runs (after seconds ...) bodies. delay is in real time.
@@ -42,6 +46,7 @@ type loadedPkg struct {
 	exports  Value
 	handlers []handler
 	env      *env
+	pkg      *Package // wasm / RegisterPackage surface for typed exports
 }
 
 // machine evaluates already-parsed forms.
@@ -320,9 +325,19 @@ func (m *machine) EvalModule(path string, forms []syntax.Form) (Value, error) {
 	return exp, nil
 }
 
-// RememberPackage caches a wasm package export. Caller must hold Lock.
-func (m *machine) RememberPackage(path string, exp Value) {
-	m.rememberLoaded(path, &loadedPkg{exports: exp})
+// RememberPackage caches a wasm package and its export map. Caller must hold Lock.
+func (m *machine) RememberPackage(path string, p Package) {
+	cp := p
+	m.rememberLoaded(path, &loadedPkg{exports: PackageValue(p), pkg: &cp})
+}
+
+// LoadedPackage returns the Package remembered for a wasm import, if any.
+func (m *machine) LoadedPackage(path string) (Package, bool) {
+	l, ok := m.loaded[path]
+	if !ok || l.pkg == nil {
+		return Package{}, false
+	}
+	return *l.pkg, true
 }
 
 func (m *machine) rememberLoaded(path string, l *loadedPkg) {

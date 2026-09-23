@@ -33,9 +33,8 @@ func (rt *Runtime) loadImport(spec, fromFile string) (Value, error) {
 		if err != nil {
 			return Value{}, err
 		}
-		exp := PackageValue(pkg)
-		rt.m.RememberPackage(path, exp)
-		return exp, nil
+		rt.m.RememberPackage(path, pkg)
+		return PackageValue(pkg), nil
 	}
 	f, err := os.Open(path)
 	if err != nil {
@@ -176,38 +175,23 @@ func packageType(p Package) Type {
 	sort.Strings(keys)
 	fields := make([]FnKey, 0, len(keys))
 	for _, k := range keys {
-		t := Any()
-		_, isFn := p.Funcs[k]
-		_, isMac := p.Macros[k]
-		if isFn || isMac {
-			t = FnType(FnClause{Result: Dynamic(Any()), Rest: true})
-		}
+		t := exportType(p, k)
 		fields = append(fields, FnKey{Name: k, Type: t})
 	}
 	return MapType(fields, nil)
 }
 
-func mapExportType(v Value) Type {
-	if v.Kind() != KindMap {
-		anyT := Any()
-		return Dynamic(MapType(nil, &anyT))
+func exportType(p Package, name string) Type {
+	if t, ok := p.Types[name]; ok {
+		return t
 	}
-	pairs := v.Pairs()
-	keys := make([]string, 0, len(pairs))
-	for _, p := range pairs {
-		keys = append(keys, p.Key.Name())
+	if _, ok := p.Funcs[name]; ok {
+		return Dynamic(Any())
 	}
-	sort.Strings(keys)
-	fields := make([]FnKey, 0, len(keys))
-	for _, k := range keys {
-		val, _ := v.MapGet(k)
-		t := Any()
-		if val.Kind() == KindFn || val.Kind() == KindMacro {
-			t = FnType(FnClause{Result: Dynamic(Any()), Rest: true})
-		}
-		fields = append(fields, FnKey{Name: k, Type: t})
+	if _, ok := p.Macros[name]; ok {
+		return MacroType()
 	}
-	return MapType(fields, nil)
+	return Any()
 }
 
 func (rt *Runtime) importType(spec, fromFile string) (Type, []Diagnostic, error) {
@@ -230,15 +214,14 @@ func (rt *Runtime) importType(spec, fromFile string) (Type, []Diagnostic, error)
 		}
 	}
 	if kind == "wasm" {
-		if exp, ok := rt.m.Loaded(path); ok {
-			return mapExportType(exp), nil, nil
+		if pkg, ok := rt.m.LoadedPackage(path); ok {
+			return packageType(pkg), nil, nil
 		}
 		pkg, err := LoadWasm(path)
 		if err != nil {
 			return Type{}, nil, err
 		}
-		exp := PackageValue(pkg)
-		rt.m.RememberPackage(path, exp)
+		rt.m.RememberPackage(path, pkg)
 		return packageType(pkg), nil, nil
 	}
 	f, err := os.Open(path)

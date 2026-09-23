@@ -33,6 +33,10 @@ const (
 	pkgKindVal   byte = 0
 	pkgKindFunc  byte = 1
 	pkgKindMacro byte = 2
+	// Typed variants carry an EncodeType blob after the name.
+	pkgKindTypedVal   byte = 3
+	pkgKindTypedFunc  byte = 4
+	pkgKindTypedMacro byte = 5
 )
 
 const (
@@ -537,11 +541,24 @@ func DecodeABIError(r io.Reader) (string, error) {
 }
 
 // EncodePackageTable encodes a WASM package export table.
+// When p.Types[name] is set, the entry uses a typed kind and embeds an
+// EncodeType descriptor so the host checker can type the export.
 func EncodePackageTable(p Package, ht *HandleTable) ([]byte, error) {
 	type entry struct {
 		kind byte
 		name string
+		typ  []byte
 		val  Value
+	}
+	typeBlob := func(name string) ([]byte, error) {
+		if p.Types == nil {
+			return nil, nil
+		}
+		t, ok := p.Types[name]
+		if !ok {
+			return nil, nil
+		}
+		return EncodeType(t)
 	}
 	var ents []entry
 	names := make([]string, 0, len(p.Vals))
@@ -550,7 +567,15 @@ func EncodePackageTable(p Package, ht *HandleTable) ([]byte, error) {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		ents = append(ents, entry{kind: pkgKindVal, name: n, val: p.Vals[n]})
+		td, err := typeBlob(n)
+		if err != nil {
+			return nil, err
+		}
+		kind := pkgKindVal
+		if len(td) > 0 {
+			kind = pkgKindTypedVal
+		}
+		ents = append(ents, entry{kind: kind, name: n, typ: td, val: p.Vals[n]})
 	}
 	names = names[:0]
 	for k := range p.Funcs {
@@ -558,7 +583,15 @@ func EncodePackageTable(p Package, ht *HandleTable) ([]byte, error) {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		ents = append(ents, entry{kind: pkgKindFunc, name: n})
+		td, err := typeBlob(n)
+		if err != nil {
+			return nil, err
+		}
+		kind := pkgKindFunc
+		if len(td) > 0 {
+			kind = pkgKindTypedFunc
+		}
+		ents = append(ents, entry{kind: kind, name: n, typ: td})
 	}
 	names = names[:0]
 	for k := range p.Macros {
@@ -566,14 +599,26 @@ func EncodePackageTable(p Package, ht *HandleTable) ([]byte, error) {
 	}
 	sort.Strings(names)
 	for _, n := range names {
-		ents = append(ents, entry{kind: pkgKindMacro, name: n})
+		td, err := typeBlob(n)
+		if err != nil {
+			return nil, err
+		}
+		kind := pkgKindMacro
+		if len(td) > 0 {
+			kind = pkgKindTypedMacro
+		}
+		ents = append(ents, entry{kind: kind, name: n, typ: td})
 	}
 	var e enc
 	e.u32(uint32(len(ents)))
 	for _, ent := range ents {
 		e.u8(ent.kind)
 		e.str(ent.name)
-		if ent.kind == pkgKindVal {
+		switch ent.kind {
+		case pkgKindTypedVal, pkgKindTypedFunc, pkgKindTypedMacro:
+			e.blob(ent.typ)
+		}
+		if ent.kind == pkgKindVal || ent.kind == pkgKindTypedVal {
 			if err := e.value(ent.val, ht); err != nil {
 				return nil, err
 			}
@@ -599,6 +644,7 @@ func DecodePackageTableForeign(r io.Reader, ht *HandleTable, foreign func(uint64
 		Funcs:  map[string]Func{},
 		Vals:   map[string]Value{},
 		Macros: map[string]Macro{},
+		Types:  map[string]Type{},
 	}
 	for range n {
 		kind, err := d.u8()
@@ -609,20 +655,36 @@ func DecodePackageTableForeign(r io.Reader, ht *HandleTable, foreign func(uint64
 		if err != nil {
 			return Package{}, err
 		}
+		var typ []byte
 		switch kind {
-		case pkgKindVal:
+		case pkgKindTypedVal, pkgKindTypedFunc, pkgKindTypedMacro:
+			typ, err = d.blob()
+			if err != nil {
+				return Package{}, err
+			}
+		}
+		switch kind {
+		case pkgKindVal, pkgKindTypedVal:
 			v, err := d.value(ht)
 			if err != nil {
 				return Package{}, err
 			}
 			p.Vals[name] = v
-		case pkgKindFunc:
+		case pkgKindFunc, pkgKindTypedFunc:
 			p.Funcs[name] = nil
-		case pkgKindMacro:
+		case pkgKindMacro, pkgKindTypedMacro:
 			p.Macros[name] = nil
 		default:
 			return Package{}, errf("unknown package entry kind %d", kind)
 		}
+		if len(typ) > 0 {
+			if t, err := DecodeType(typ); err == nil {
+				p.Types[name] = t
+			}
+		}
+	}
+	if len(p.Types) == 0 {
+		p.Types = nil
 	}
 	return p, nil
 }
