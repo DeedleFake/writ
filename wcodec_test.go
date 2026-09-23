@@ -141,11 +141,13 @@ func TestWcodecDrop(t *testing.T) {
 }
 
 func TestWcodecPackageTable(t *testing.T) {
+	greetT := FnType(PosFn(StringType(), StringType()))
+	versionT := IntType()
 	p := Package{
-		Funcs: map[string]Func{"greet": func(args []Value) (Value, error) { return Nil, nil }},
-		Vals:  map[string]Value{"version": Int64(1)},
-		Macros: map[string]Macro{
-			"unless": func(args []syntax.Form) (syntax.Form, error) { return syntax.Nil, nil },
+		Exports: map[string]Value{
+			"greet":   TypedFn(func(args []Value) (Value, error) { return Nil, nil }, greetT),
+			"version": Typed(Int64(1), versionT),
+			"unless":  Mac(func(args []syntax.Form) (syntax.Form, error) { return syntax.Nil, nil }),
 		},
 	}
 	b, err := EncodePackageTable(p, nil)
@@ -156,17 +158,42 @@ func TestWcodecPackageTable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := got.Funcs["greet"]; !ok {
-		t.Fatalf("funcs %v", got.Funcs)
+	gv, ok := got.Exports["greet"]
+	if !ok || gv.k != KindFn {
+		t.Fatalf("greet %v %v", gv, ok)
 	}
-	if _, ok := got.Macros["unless"]; !ok {
-		t.Fatalf("macros %v", got.Macros)
+	if dt, ok := gv.DeclaredType(); !ok || !sameType(dt, greetT) {
+		t.Fatalf("greet type %v %v", dt, ok)
 	}
-	v, ok := got.Vals["version"]
-	if !ok || !v.Equal(Int64(1)) {
-		t.Fatalf("vals %v", got.Vals)
+	uv, ok := got.Exports["unless"]
+	if !ok || uv.k != KindMacro {
+		t.Fatalf("unless %v %v", uv, ok)
+	}
+	vv, ok := got.Exports["version"]
+	if !ok || !vv.Equal(Int64(1)) {
+		t.Fatalf("version %v %v", vv, ok)
+	}
+	if dt, ok := vv.DeclaredType(); !ok || !sameType(dt, versionT) {
+		t.Fatalf("version type %v %v", dt, ok)
+	}
+	p2 := Package{Exports: map[string]Value{"f": Fn(nil)}}
+	b2, err := EncodePackageTable(p2, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got2, err := DecodePackageTable(bytes.NewReader(b2), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fv, ok := got2.Exports["f"]
+	if !ok || fv.k != KindFn {
+		t.Fatalf("untyped %#v", got2)
+	}
+	if _, ok := fv.DeclaredType(); ok {
+		t.Fatalf("untyped should have no DeclaredType: %#v", fv)
 	}
 }
+
 
 func TestWcodecABIError(t *testing.T) {
 	b := EncodeABIError("boom")

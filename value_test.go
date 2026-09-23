@@ -50,8 +50,9 @@ func TestWithSpanDoesNotChangeIdentity(t *testing.T) {
 
 func TestValueSize(t *testing.T) {
 	n := unsafe.Sizeof(Value{})
-	if n > 64 {
-		t.Fatalf("sizeof(Value) = %d, want <= 64 (was 168)", n)
+	// Declared export types add a *Type slot (nil ⇒ untyped).
+	if n > 72 {
+		t.Fatalf("sizeof(Value) = %d, want <= 72 (was 64 before typ)", n)
 	}
 }
 

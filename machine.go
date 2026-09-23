@@ -16,12 +16,11 @@ type Func func(args []Value) (Value, error)
 // one form, or a list of forms to splice at the call site.
 type Macro func(args []syntax.Form) (syntax.Form, error)
 
-// Package is funcs, macros, and values for (import). The checker types funcs
-// as fn(...) -> dynamic(any()) and values as any().
+// Package is a set of named exports for (import).
+// Each export is a Value: use Fn/TypedFn, Mac/TypedMac, or Typed (for vals).
+// Declared types live on the Values (DeclaredType), not a separate Types map.
 type Package struct {
-	Funcs  map[string]Func
-	Macros map[string]Macro
-	Vals   map[string]Value
+	Exports map[string]Value
 }
 
 // Scheduler runs (after seconds ...) bodies. delay is in real time.
@@ -42,6 +41,7 @@ type loadedPkg struct {
 	exports  Value
 	handlers []handler
 	env      *env
+	pkg      *Package // wasm / RegisterPackage surface for typed exports
 }
 
 // machine evaluates already-parsed forms.
@@ -320,9 +320,19 @@ func (m *machine) EvalModule(path string, forms []syntax.Form) (Value, error) {
 	return exp, nil
 }
 
-// RememberPackage caches a wasm package export. Caller must hold Lock.
-func (m *machine) RememberPackage(path string, exp Value) {
-	m.rememberLoaded(path, &loadedPkg{exports: exp})
+// RememberPackage caches a wasm package and its export map. Caller must hold Lock.
+func (m *machine) RememberPackage(path string, p Package) {
+	cp := p
+	m.rememberLoaded(path, &loadedPkg{exports: PackageValue(p), pkg: &cp})
+}
+
+// LoadedPackage returns the Package remembered for a wasm import, if any.
+func (m *machine) LoadedPackage(path string) (Package, bool) {
+	l, ok := m.loaded[path]
+	if !ok || l.pkg == nil {
+		return Package{}, false
+	}
+	return *l.pkg, true
 }
 
 func (m *machine) rememberLoaded(path string, l *loadedPkg) {
@@ -476,15 +486,16 @@ func evalNamedImports(imps []namedImport, env *env, c *ctx) error {
 // PackageValue builds the map returned by (import) of a native package.
 func PackageValue(p Package) Value {
 	names := map[string]Value{}
-	for name, f := range p.Funcs {
-		fn := f
-		names[name] = Value{k: KindFn, p: &fnVal{native: fn, name: name}}
+	for name, v := range p.Exports {
+		if v.k == KindFn || v.k == KindMacro {
+			if f := v.fnData(); f != nil {
+				cp := *f
+				cp.name = name
+				v.p = &cp
+			}
+		}
+		names[name] = v
 	}
-	for name, f := range p.Macros {
-		fn := f
-		names[name] = Value{k: KindMacro, p: &fnVal{macro: fn, name: name}}
-	}
-	maps.Copy(names, p.Vals)
 	return mapFromNames(names)
 }
 

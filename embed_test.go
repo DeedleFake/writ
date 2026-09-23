@@ -63,15 +63,13 @@ func TestImportCycle(t *testing.T) {
 func TestRegisterPackage(t *testing.T) {
 	rt := New()
 	rt.RegisterPackage("mathx", Package{
-		Funcs: map[string]Func{
-			"double": func(args []Value) (Value, error) {
+		Exports: map[string]Value{
+			"double": Fn(func(args []Value) (Value, error) {
 				if len(args) != 1 || !args[0].IsInt() {
 					return Nil, syntax.ErrorMsg("double needs an int")
 				}
 				return Int64(args[0].BigInt().Int64() * 2), nil
-			},
-		},
-		Vals: map[string]Value{
+			}),
 			"pi": Float(3.25),
 		},
 	})
@@ -97,12 +95,12 @@ func TestRegisterPackage(t *testing.T) {
 func TestRegisterPackageSimple(t *testing.T) {
 	rt := New()
 	rt.RegisterPackage("hello", Package{
-		Funcs: map[string]Func{
-			"greet": func(args []Value) (Value, error) {
+		Exports: map[string]Value{
+			"greet": Fn(func(args []Value) (Value, error) {
 				return String("hello"), nil
-			},
+			}),
+			"n": Int64(1),
 		},
-		Vals: map[string]Value{"n": Int64(1)},
 	})
 	v, err := rt.Eval(rd(`(map-get (import "hello") 'n)`))
 	if err != nil {
@@ -466,7 +464,7 @@ func TestImportRequiresSuffix(t *testing.T) {
 	}
 	rt := New()
 	rt.RegisterPackage("lib", Package{
-		Vals: map[string]Value{"n": Int64(7)},
+		Exports: map[string]Value{"n": Int64(7)},
 	})
 	v, err := rt.Eval(rd(`(map-get (import "lib") 'n)`))
 	if err != nil {

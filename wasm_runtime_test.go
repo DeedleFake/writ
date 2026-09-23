@@ -35,26 +35,26 @@ func TestLoadWasmHello(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	v, ok := pkg.Vals["version"]
+	v, ok := pkg.Exports["version"]
 	if !ok || !v.Equal(Int64(1)) {
 		t.Fatalf("version %v %v", v, ok)
 	}
-	greet, ok := pkg.Funcs["greet"]
-	if !ok || greet == nil {
+	greetV, ok := pkg.Exports["greet"]
+	if !ok || greetV.fnData() == nil || greetV.fnData().native == nil {
 		t.Fatal("greet")
 	}
-	out, err := greet([]Value{String("ada")})
+	out, err := greetV.fnData().native([]Value{String("ada")})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if out.Text() != "hello, ada" {
 		t.Fatalf("greet: %v", out)
 	}
-	unless, ok := pkg.Macros["unless"]
-	if !ok || unless == nil {
+	unlessV, ok := pkg.Exports["unless"]
+	if !ok || unlessV.fnData() == nil || unlessV.fnData().macro == nil {
 		t.Fatal("unless")
 	}
-	frags, err := unless([]syntax.Form{syntax.False, syntax.Int64(7)})
+	frags, err := unlessV.fnData().macro([]syntax.Form{syntax.False, syntax.Int64(7)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,21 +78,25 @@ func TestLoadWasmCrossPackageOpaque(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c, err := pkgA.Funcs["mk"](nil)
+	mk := pkgA.Exports["mk"].fnData().native
+	echo := pkgB.Exports["echo"].fnData().native
+	inc := pkgA.Exports["inc"].fnData().native
+	get := pkgA.Exports["get"].fnData().native
+	c, err := mk(nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	passed, err := pkgB.Funcs["echo"]([]Value{c})
+	passed, err := echo([]Value{c})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := passed.As[*struct{}](); ok {
 		t.Fatal("stranger must not unwrap")
 	}
-	if _, err := pkgA.Funcs["inc"]([]Value{passed}); err != nil {
+	if _, err := inc([]Value{passed}); err != nil {
 		t.Fatal(err)
 	}
-	n, err := pkgA.Funcs["get"]([]Value{passed})
+	n, err := get([]Value{passed})
 	if err != nil {
 		t.Fatal(err)
 	}

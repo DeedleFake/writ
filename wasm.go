@@ -176,25 +176,34 @@ func (w *wasmInst) readPackage() (Package, error) {
 	if err != nil {
 		return Package{}, err
 	}
-	if pkg.Funcs == nil {
-		pkg.Funcs = map[string]Func{}
+	if pkg.Exports == nil {
+		pkg.Exports = map[string]Value{}
 	}
-	if pkg.Macros == nil {
-		pkg.Macros = map[string]Macro{}
-	}
-	if pkg.Vals == nil {
-		pkg.Vals = map[string]Value{}
-	}
-	for name := range pkg.Funcs {
+	for name, v := range pkg.Exports {
 		n := name
-		pkg.Funcs[n] = func(args []Value) (Value, error) {
-			return w.call(callKindFunc, n, args)
-		}
-	}
-	for name := range pkg.Macros {
-		n := name
-		pkg.Macros[n] = func(args []syntax.Form) (syntax.Form, error) {
-			return w.callMacro(n, args)
+		switch v.k {
+		case KindFn:
+			f := v.fnData()
+			if f == nil {
+				f = &fnVal{}
+				v.p = f
+			}
+			f.name = n
+			f.native = func(args []Value) (Value, error) {
+				return w.call(callKindFunc, n, args)
+			}
+			pkg.Exports[n] = v
+		case KindMacro:
+			f := v.fnData()
+			if f == nil {
+				f = &fnVal{}
+				v.p = f
+			}
+			f.name = n
+			f.macro = func(args []syntax.Form) (syntax.Form, error) {
+				return w.callMacro(n, args)
+			}
+			pkg.Exports[n] = v
 		}
 	}
 	return pkg, nil

@@ -418,10 +418,10 @@ func TestCheckKeyedImport(t *testing.T) {
 
 	rt := New()
 	rt.RegisterPackage("io", Package{
-		Funcs: map[string]Func{
-			"write": func(args []Value) (Value, error) {
+		Exports: map[string]Value{
+			"write": Fn(func(args []Value) (Value, error) {
 				return Nil, nil
-			},
+			}),
 		},
 	})
 	res = rt.Check(rd(`(import io: "io") (io.write "x")`))

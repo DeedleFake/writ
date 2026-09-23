@@ -129,8 +129,8 @@ func TestWasmCheckLoadError(t *testing.T) {
 func TestRegisterPackageMacro(t *testing.T) {
 	rt := New()
 	rt.RegisterPackage("mac", Package{
-		Macros: map[string]Macro{
-			"unless": func(args []syntax.Form) (syntax.Form, error) {
+		Exports: map[string]Value{
+			"unless": Mac(func(args []syntax.Form) (syntax.Form, error) {
 				if len(args) < 2 {
 					return syntax.Form{}, syntax.ErrorMsg("unless needs 2 args")
 				}
@@ -140,7 +140,7 @@ func TestRegisterPackageMacro(t *testing.T) {
 					args[1],
 				)
 				return syntax.CallList(form), nil
-			},
+			}),
 		},
 	})
 	v, err := rt.Eval(rd(`
@@ -169,5 +169,49 @@ func TestWasmOpaqueBox(t *testing.T) {
 	}
 	if !v.Equal(Int64(2)) {
 		t.Fatalf("box: %v", v)
+	}
+}
+
+func TestWasmImportTypes(t *testing.T) {
+	wasm := buildWasmHello(t)
+	dir := t.TempDir()
+	ok := filepath.Join(dir, "ok.writ")
+	body := "(import m: \"" + filepath.ToSlash(wasm) + "\")\n(+ m.version 1)\n(m.greet \"ada\")\n"
+	if err := os.WriteFile(ok, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rt := New(WithAllowAbsoluteImports())
+	res := rt.CheckFile(ok)
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("typed wasm ok: %v", res.Diagnostics)
+	}
+	bad := filepath.Join(dir, "bad.writ")
+	body = "(import m: \"" + filepath.ToSlash(wasm) + "\")\n(m.greet 1)\n"
+	if err := os.WriteFile(bad, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res = rt.CheckFile(bad)
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("expected greet int arg type error")
+	}
+}
+
+func TestRegisterPackageTypes(t *testing.T) {
+	rt := New()
+	rt.RegisterPackage("mathx", Package{
+		Exports: map[string]Value{
+			"double": TypedFn(func(args []Value) (Value, error) {
+				return Int64(args[0].BigInt().Int64() * 2), nil
+			}, FnType(PosFn(IntType(), IntType()))),
+			"two": Typed(Int64(2), IntType()),
+		},
+	})
+	res := rt.Check(rd(`(import m: "mathx") (+ (m.double 21) m.two)`))
+	if len(res.Diagnostics) != 0 {
+		t.Fatalf("typed package: %v", res.Diagnostics)
+	}
+	res = rt.Check(rd(`(import m: "mathx") (m.double "x")`))
+	if len(res.Diagnostics) == 0 {
+		t.Fatal("expected double string type error")
 	}
 }
